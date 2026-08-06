@@ -59,6 +59,9 @@ object Leveling {
 
     fun rankForTotalXp(totalXp: Int): Rank = Rank.forHunterLevel(hunterLevelForTotalXp(totalXp))
 
+    /** Progress-within-level for the Hunter ring, on the same scaled basis as [hunterLevelForTotalXp]. */
+    fun hunterLevelProgress(totalXp: Int): LevelProgress = progressForXp(totalXp / HUNTER_LEVEL_SCALE)
+
     /**
      * Applies the flat XP penalty for a missed non-negotiable, floored at the
      * XP required for the stat's *current* level — a bad day can't erase a

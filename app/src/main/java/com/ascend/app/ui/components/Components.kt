@@ -2,15 +2,19 @@ package com.ascend.app.ui.components
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -20,6 +24,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.ascend.app.ui.theme.AscendColors
@@ -81,6 +87,44 @@ fun ProgressBar(
                     Brush.horizontalGradient(listOf(fillColor.copy(alpha = 0.7f), fillColor)),
                 ),
         )
+    }
+}
+
+/** Circular XP ring with centered content — used for the Hunter level display. */
+@Composable
+fun CircularProgressRing(
+    progress: Float,
+    modifier: Modifier = Modifier,
+    diameter: Dp = 148.dp,
+    strokeWidth: Dp = 12.dp,
+    trackColor: Color = AscendColors.SurfaceElevated2,
+    progressColor: Color = AscendColors.AccentBlue,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    val animated by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = progress.coerceIn(0f, 1f),
+        animationSpec = androidx.compose.animation.core.tween(700),
+        label = "ring-progress",
+    )
+    Box(modifier = modifier.size(diameter), contentAlignment = Alignment.Center) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val stroke = Stroke(width = strokeWidth.toPx(), cap = StrokeCap.Round)
+            drawArc(
+                color = trackColor,
+                startAngle = -90f,
+                sweepAngle = 360f,
+                useCenter = false,
+                style = stroke,
+            )
+            drawArc(
+                color = progressColor,
+                startAngle = -90f,
+                sweepAngle = 360f * animated,
+                useCenter = false,
+                style = stroke,
+            )
+        }
+        content()
     }
 }
 

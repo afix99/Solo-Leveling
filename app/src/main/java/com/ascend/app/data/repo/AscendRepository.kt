@@ -14,7 +14,9 @@ import com.ascend.app.domain.EvidenceType
 import com.ascend.app.domain.Leveling
 import com.ascend.app.domain.Stat
 import java.time.LocalDate
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 
 /**
  * Single entry point for all data access + the business rules that stitch
@@ -50,6 +52,12 @@ class AscendRepository(private val db: AscendDatabase) {
     fun observeEvidenceLog(): Flow<List<EvidenceLogEntryEntity>> = evidenceLogDao.observeAll()
 
     suspend fun getHunterProfile(): HunterProfileEntity = hunterProfileDao.get() ?: HunterProfileEntity()
+
+    /** Ensures a HunterProfile row exists so [observeHunterProfile] never emits
+     * null forever on a fresh install — called once at app startup. */
+    suspend fun ensureProfileExists() {
+        if (hunterProfileDao.get() == null) hunterProfileDao.upsert(HunterProfileEntity())
+    }
 
     // ---- Habit CRUD --------------------------------------------------------
 
@@ -175,6 +183,9 @@ class AscendRepository(private val db: AscendDatabase) {
         }
     }
 
+    suspend fun getLogsForRange(start: LocalDate, end: LocalDate): List<DailyLogEntity> =
+        dailyLogDao.getForRange(start.toString(), end.toString())
+
     suspend fun countNonNegotiableMissesInLast7Days(today: LocalDate): Int =
         dailyLogDao.countNonNegotiableMissesInRange(today.minusDays(6).toString(), today.toString())
 
@@ -292,4 +303,32 @@ class AscendRepository(private val db: AscendDatabase) {
         val current = getHunterProfile()
         hunterProfileDao.upsert(current.copy(hunterName = hunterName, onboardingComplete = true))
     }
+
+    /** Wipes every table — used by Settings' "Reset data". Irreversible. */
+    suspend fun resetAllData() = withContext(Dispatchers.IO) { db.clearAllTables() }
+
+    // ---- Export -------------------------------------------------------------
+
+    /** A minimal, dependency-free JSON export of everything the app knows.
+     * Hand-built rather than pulled from a serialization library, since the
+     * shape is small and fully under our control. */
+    suspend fun exportAllDataAsJson(): String = withContext(Dispatchers.IO) {
+        val habits = habitDao.getActiveHabits()
+        val profile = getHunterProfile()
+        val sb = StringBuilder()
+        sb.append("{\n")
+        sb.append("  \"hunterName\": ${quote(profile.hunterName)},\n")
+        sb.append("  \"habits\": [\n")
+        sb.append(
+            habits.joinToString(",\n") { h ->
+                "    {\"name\": ${quote(h.name)}, \"stat\": \"${h.stat}\", " +
+                    "\"nonNegotiable\": ${h.isNonNegotiable}}"
+            },
+        )
+        sb.append("\n  ]\n")
+        sb.append("}\n")
+        sb.toString()
+    }
+
+    private fun quote(value: String): String = "\"" + value.replace("\"", "\\\"") + "\""
 }
