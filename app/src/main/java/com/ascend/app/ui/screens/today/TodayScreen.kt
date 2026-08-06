@@ -49,6 +49,8 @@ import com.ascend.app.data.db.HabitEntity
 import com.ascend.app.data.repo.AscendRepository
 import com.ascend.app.domain.Leveling
 import com.ascend.app.domain.Rank
+import com.ascend.app.domain.StarterHabits
+import com.ascend.app.domain.StarterPack
 import com.ascend.app.domain.Stat
 import com.ascend.app.focus.FocusSessionActivity
 import com.ascend.app.ui.SimpleViewModelFactory
@@ -153,11 +155,12 @@ fun TodayScreen(repository: AscendRepository, onOpenHabits: () -> Unit) {
                 }
             }
 
-            item { Eyebrow("Non-negotiables") }
-            if (nonNegotiables.isEmpty()) {
-                item {
-                    EmptyRow("No non-negotiables yet — add some in Habits.", onOpenHabits)
-                }
+            if (habits.isEmpty()) {
+                item { EmptyStateCard(onAddPack = { vm.applyStarterPack(it) }, onOpenHabits = onOpenHabits) }
+            }
+
+            if (nonNegotiables.isNotEmpty()) {
+                item { Eyebrow("Non-negotiables · must do today") }
             }
             items(nonNegotiables, key = { "nn-${it.id}" }) { habit ->
                 HabitRow(
@@ -178,7 +181,9 @@ fun TodayScreen(repository: AscendRepository, onOpenHabits: () -> Unit) {
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Eyebrow("Other habits (${otherHabits.size})")
+                        Eyebrow(
+                            if (expanded) "Other habits · optional" else "Other habits · optional (${otherHabits.size})",
+                        )
                         Icon(
                             if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                             contentDescription = null,
@@ -206,6 +211,14 @@ fun TodayScreen(repository: AscendRepository, onOpenHabits: () -> Unit) {
             }
 
             item { Spacer(Modifier.height(60.dp)) }
+        }
+
+        // XP confirmation sits above the level-up toast slot so both can appear
+        // in sequence without fighting for the same position.
+        vm.lastXpGain?.let { gain ->
+            Box(modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 84.dp)) {
+                XpGainToast(gain = gain, onDismiss = vm::clearXpGain)
+            }
         }
 
         AnimatedVisibility(
@@ -252,7 +265,7 @@ private fun HunterHeader(hunterName: String, totalXp: Int) {
                 Pill(rank.displayName, rank.color())
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "${progress.xpIntoLevel} / ${progress.xpSpanForLevel} XP to next level",
+                    "${progress.xpSpanForLevel - progress.xpIntoLevel} XP to level ${hunterLevel + 1}",
                     color = AscendColors.TextTertiary,
                     fontSize = 11.sp,
                 )
@@ -348,18 +361,101 @@ private fun HabitRow(
                 Text("Redemption · 1.5× XP", color = AscendColors.Amber, fontSize = 11.sp)
             }
         }
-        Pill(habit.stat.shortLabel, habit.stat.color())
+        Pill(habit.stat.plainName, habit.stat.color())
         if (habit.isFocusEnabled) {
-            IconButton(onClick = onFocus) {
-                Icon(Icons.Default.PlayArrow, contentDescription = "Start focus session", tint = AscendColors.AccentBlue)
+            Spacer(Modifier.width(6.dp))
+            // Labelled rather than a bare icon — a lone ▶ gave no clue that a
+            // timer existed at all.
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(AscendColors.AccentBlue.copy(alpha = 0.16f))
+                    .clickable(onClick = onFocus)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    tint = AscendColors.AccentBlue,
+                    modifier = Modifier.size(14.dp),
+                )
+                Spacer(Modifier.width(3.dp))
+                Text(
+                    "${habit.targetDurationMinutes ?: 20}m",
+                    color = AscendColors.AccentBlue,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
         }
     }
 }
 
+/** Shown when there are no habits at all — the state the first build dumped
+ * people into with no way forward. Now it offers one-tap starter sets. */
 @Composable
-private fun EmptyRow(text: String, onClick: () -> Unit) {
-    GlassCard(modifier = Modifier.clickable(onClick = onClick)) {
-        Text(text, color = AscendColors.TextSecondary, fontSize = 13.sp)
+private fun EmptyStateCard(onAddPack: (StarterPack) -> Unit, onOpenHabits: () -> Unit) {
+    GlassCard(accent = AscendColors.AccentBlue) {
+        Text(
+            "You have no habits yet",
+            color = AscendColors.TextPrimary,
+            fontWeight = FontWeight.Bold,
+            fontSize = 17.sp,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Add a starter set to get going in one tap, or build your own in the Habits tab.",
+            color = AscendColors.TextSecondary,
+            fontSize = 13.sp,
+        )
+        Spacer(Modifier.height(14.dp))
+        StarterHabits.all.forEach { pack ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(AscendColors.SurfaceElevated)
+                    .clickable { onAddPack(pack) }
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(pack.title, color = AscendColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Text(pack.subtitle, color = AscendColors.TextTertiary, fontSize = 11.sp)
+                }
+                Text("Add", color = AscendColors.AccentBlue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+        Text(
+            "Build my own instead",
+            color = AscendColors.TextSecondary,
+            fontSize = 12.sp,
+            modifier = Modifier.clickable(onClick = onOpenHabits).padding(top = 4.dp),
+        )
+    }
+}
+
+/** Brief "+20 XP · Mind" confirmation so completing a habit visibly does something. */
+@Composable
+private fun XpGainToast(gain: XpGain, onDismiss: () -> Unit) {
+    LaunchedEffect(gain.stamp) {
+        kotlinx.coroutines.delay(1500)
+        onDismiss()
+    }
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(gain.stat.color().copy(alpha = 0.9f))
+            .padding(horizontal = 18.dp, vertical = 9.dp),
+    ) {
+        Text(
+            "+${gain.amount} XP · ${gain.stat.plainName}",
+            color = AscendColors.Background,
+            fontWeight = FontWeight.Bold,
+            fontSize = 13.sp,
+        )
     }
 }

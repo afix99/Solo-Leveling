@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ascend.app.data.db.HabitEntity
 import com.ascend.app.data.repo.AscendRepository
+import com.ascend.app.domain.StarterPack
 import com.ascend.app.domain.Stat
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -34,6 +35,10 @@ class HabitsViewModel(private val repository: AscendRepository) : ViewModel() {
                 targetDurationMinutes = if (isFocusEnabled) targetMinutes else null,
             )
         }
+    }
+
+    fun applyStarterPack(pack: StarterPack) {
+        viewModelScope.launch { repository.applyStarterPack(pack) }
     }
 
     fun updateHabit(habit: HabitEntity) {

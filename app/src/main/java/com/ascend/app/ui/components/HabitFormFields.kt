@@ -1,5 +1,6 @@
 package com.ascend.app.ui.components
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,6 +14,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -53,14 +55,17 @@ fun HabitFormFields(
         )
 
         Column {
-            Eyebrow("Stat")
+            Eyebrow("Which stat does this build?")
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+            ) {
                 Stat.entries.forEach { s ->
                     FilterChip(
                         selected = stat == s,
                         onClick = { onStatChange(s) },
-                        label = { Text(s.shortLabel, fontSize = 12.sp) },
+                        label = { Text(s.plainName, fontSize = 12.sp) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = s.color().copy(alpha = 0.22f),
                             selectedLabelColor = s.color(),
@@ -70,6 +75,8 @@ fun HabitFormFields(
                     )
                 }
             }
+            Spacer(Modifier.height(6.dp))
+            Text(stat.description, color = AscendColors.TextTertiary, fontSize = 11.sp)
         }
 
         ToggleRow(

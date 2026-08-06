@@ -12,6 +12,7 @@ import com.ascend.app.data.db.WeeklyReviewEntity
 import com.ascend.app.domain.DifficultyRating
 import com.ascend.app.domain.EvidenceType
 import com.ascend.app.domain.Leveling
+import com.ascend.app.domain.StarterPack
 import com.ascend.app.domain.Stat
 import java.time.LocalDate
 import kotlinx.coroutines.Dispatchers
@@ -84,6 +85,24 @@ class AscendRepository(private val db: AscendDatabase) {
     }
 
     suspend fun updateHabit(habit: HabitEntity) = habitDao.update(habit)
+
+    /** Bulk-creates a starter pack's habits, skipping any name already present
+     * so applying a pack twice doesn't produce duplicates. */
+    suspend fun applyStarterPack(pack: StarterPack) {
+        val existingNames = habitDao.getActiveHabits().map { it.name.lowercase() }.toSet()
+        for (template in pack.habits) {
+            if (template.name.lowercase() in existingNames) continue
+            createHabit(
+                name = template.name,
+                stat = template.stat,
+                isNonNegotiable = template.isNonNegotiable,
+                reminderHour = null,
+                reminderMinute = null,
+                isFocusEnabled = template.focusMinutes != null,
+                targetDurationMinutes = template.focusMinutes,
+            )
+        }
+    }
 
     suspend fun archiveHabit(habitId: Long) {
         habitDao.getById(habitId)?.let { habitDao.update(it.copy(archived = true)) }
@@ -182,6 +201,9 @@ class AscendRepository(private val db: AscendDatabase) {
             }
         }
     }
+
+    suspend fun getLogForHabitAndDate(habitId: Long, date: LocalDate): DailyLogEntity? =
+        dailyLogDao.getForHabitAndDate(habitId, date.toString())
 
     suspend fun getLogsForRange(start: LocalDate, end: LocalDate): List<DailyLogEntity> =
         dailyLogDao.getForRange(start.toString(), end.toString())

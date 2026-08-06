@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.Icon
@@ -20,8 +21,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -31,6 +35,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.ascend.app.data.repo.AscendRepository
 import com.ascend.app.ui.screens.habits.HabitsScreen
+import com.ascend.app.ui.screens.help.HowItWorksScreen
 import com.ascend.app.ui.screens.liestruths.LieTruthScreen
 import com.ascend.app.ui.screens.onboarding.OnboardingScreen
 import com.ascend.app.ui.screens.profile.ProfileScreen
@@ -43,12 +48,13 @@ private sealed class Dest(val route: String, val label: String, val icon: ImageV
     data object Today : Dest("today", "Today", Icons.Default.Home)
     data object Stats : Dest("stats", "Stats", Icons.Default.Bolt)
     data object Habits : Dest("habits", "Habits", Icons.Default.List)
-    data object Profile : Dest("profile", "Profile", Icons.Default.Person)
+    data object Review : Dest("weekly_review", "Review", Icons.Default.Insights)
+    data object Profile : Dest("profile", "More", Icons.Default.Person)
 }
 
-private val bottomTabs = listOf(Dest.Today, Dest.Stats, Dest.Habits, Dest.Profile)
-private const val ROUTE_WEEKLY_REVIEW = "weekly_review"
+private val bottomTabs = listOf(Dest.Today, Dest.Stats, Dest.Habits, Dest.Review, Dest.Profile)
 private const val ROUTE_LIES_TRUTHS = "lies_truths"
+private const val ROUTE_HOW_IT_WORKS = "how_it_works"
 
 @Composable
 fun AscendApp(repository: AscendRepository) {
@@ -58,10 +64,21 @@ fun AscendApp(repository: AscendRepository) {
     // write is still propagating through the Flow.
     var onboardedThisSession by remember { mutableStateOf(false) }
 
-    Box(modifier = Modifier.fillMaxSize().background(AscendColors.Background)) {
+    Box(
+        modifier = Modifier.fillMaxSize().background(AscendColors.Background),
+        contentAlignment = Alignment.Center,
+    ) {
         val profile = hunterProfile
         when {
-            profile == null -> Unit // brief first-launch loading gap, before the profile row exists
+            // First launch, before the profile row is written. Showing the
+            // wordmark rather than nothing, so this never reads as a dead app.
+            profile == null -> Text(
+                "ASCEND",
+                color = AscendColors.AccentBlue,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 28.sp,
+                letterSpacing = 4.sp,
+            )
             profile.onboardingComplete || onboardedThisSession -> MainScaffold(repository)
             else -> OnboardingScreen(repository = repository, onComplete = { onboardedThisSession = true })
         }
@@ -115,15 +132,16 @@ private fun MainScaffold(repository: AscendRepository) {
                 }
                 composable(Dest.Stats.route) { StatsScreen(repository = repository) }
                 composable(Dest.Habits.route) { HabitsScreen(repository = repository) }
+                composable(Dest.Review.route) { WeeklyReviewScreen(repository = repository) }
                 composable(Dest.Profile.route) {
                     ProfileScreen(
                         repository = repository,
-                        onOpenWeeklyReview = { navController.navigate(ROUTE_WEEKLY_REVIEW) },
                         onOpenLiesTruths = { navController.navigate(ROUTE_LIES_TRUTHS) },
+                        onOpenHowItWorks = { navController.navigate(ROUTE_HOW_IT_WORKS) },
                     )
                 }
-                composable(ROUTE_WEEKLY_REVIEW) { WeeklyReviewScreen(repository = repository) }
                 composable(ROUTE_LIES_TRUTHS) { LieTruthScreen(repository = repository) }
+                composable(ROUTE_HOW_IT_WORKS) { HowItWorksScreen() }
             }
         }
     }

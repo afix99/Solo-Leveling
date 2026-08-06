@@ -32,6 +32,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ascend.app.data.db.HabitEntity
 import com.ascend.app.data.repo.AscendRepository
+import com.ascend.app.domain.StarterHabits
 import com.ascend.app.domain.Stat
 import com.ascend.app.ui.SimpleViewModelFactory
 import com.ascend.app.ui.components.Eyebrow
@@ -76,17 +77,42 @@ fun HabitsScreen(repository: AscendRepository) {
 
             if (habits.isEmpty() && !creatingNew) {
                 item {
-                    GlassCard {
+                    GlassCard(accent = AscendColors.AccentBlue) {
                         Text(
-                            "No habits yet. Tap + New to create your first non-negotiable.",
+                            "No habits yet",
+                            color = AscendColors.TextPrimary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Tap + New above to write your own, or add a ready-made set:",
                             color = AscendColors.TextSecondary,
                             fontSize = 13.sp,
                         )
+                        Spacer(Modifier.height(12.dp))
+                        StarterHabits.all.forEach { pack ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { vm.applyStarterPack(pack) }
+                                    .padding(vertical = 9.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(pack.title, color = AscendColors.TextPrimary, fontSize = 14.sp)
+                                    Text(pack.subtitle, color = AscendColors.TextTertiary, fontSize = 11.sp)
+                                }
+                                Text("Add", color = AscendColors.AccentBlue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
                     }
                 }
             }
 
-            item { Eyebrow("Non-negotiables") }
+            if (habits.any { it.isNonNegotiable }) {
+                item { Eyebrow("Non-negotiables · miss these and you lose XP") }
+            }
             items(habits.filter { it.isNonNegotiable }, key = { it.id }) { habit ->
                 HabitListRow(
                     habit = habit,
@@ -97,8 +123,10 @@ fun HabitsScreen(repository: AscendRepository) {
                 )
             }
 
-            item { Spacer(Modifier.height(8.dp)) }
-            item { Eyebrow("Other habits") }
+            if (habits.any { !it.isNonNegotiable }) {
+                item { Spacer(Modifier.height(8.dp)) }
+                item { Eyebrow("Other habits · bonus XP, no penalty") }
+            }
             items(habits.filterNot { it.isNonNegotiable }, key = { it.id }) { habit ->
                 HabitListRow(
                     habit = habit,
@@ -117,7 +145,8 @@ fun HabitsScreen(repository: AscendRepository) {
 @Composable
 private fun NewHabitCard(onCreate: (String, Stat, Boolean, Boolean, Int) -> Unit) {
     var name by remember { mutableStateOf("") }
-    var stat by remember { mutableStateOf(Stat.STR) }
+    var stat by remember { mutableStateOf(Stat.VIT) }
+    var statTouched by remember { mutableStateOf(false) }
     var nonNeg by remember { mutableStateOf(true) }
     var focus by remember { mutableStateOf(false) }
     var minutes by remember { mutableStateOf(20) }
@@ -125,9 +154,14 @@ private fun NewHabitCard(onCreate: (String, Stat, Boolean, Boolean, Int) -> Unit
     GlassCard(accent = AscendColors.AccentBlue) {
         HabitFormFields(
             name = name,
-            onNameChange = { name = it },
+            onNameChange = { newName ->
+                name = newName
+                // Auto-file the habit under a sensible stat as you type, until
+                // the user picks one themselves.
+                if (!statTouched) stat = StarterHabits.suggestStat(newName)
+            },
             stat = stat,
-            onStatChange = { stat = it },
+            onStatChange = { stat = it; statTouched = true },
             isNonNegotiable = nonNeg,
             onNonNegotiableChange = { nonNeg = it },
             isFocusEnabled = focus,

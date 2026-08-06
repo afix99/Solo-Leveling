@@ -11,11 +11,17 @@ import com.ascend.app.data.db.HunterProfileEntity
 import com.ascend.app.data.db.LieTruthEntity
 import com.ascend.app.data.db.StatProgressEntity
 import com.ascend.app.data.repo.AscendRepository
+import com.ascend.app.domain.Leveling
+import com.ascend.app.domain.StarterPack
+import com.ascend.app.domain.Stat
 import java.time.LocalDate
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+/** A just-earned XP award, surfaced as a brief confirmation on Today. */
+data class XpGain(val amount: Int, val stat: Stat, val stamp: Long)
 
 /** Drives the Today screen: today's checklist, XP/rank state, and the two
  * gentle nudges (recalibration + lie/truth). See design spec §4.5, §5. */
@@ -48,10 +54,35 @@ class HomeViewModel(private val repository: AscendRepository) : ViewModel() {
         }
     }
 
+    /** Set briefly after a completion so the UI can confirm "+20 XP" — without
+     * it, checking a habit looks like nothing happened. */
+    var lastXpGain by mutableStateOf<XpGain?>(null)
+        private set
+
     fun toggleHabit(habit: HabitEntity, completed: Boolean) {
         viewModelScope.launch {
+            val log = repository.getLogForHabitAndDate(habit.id, today)
+            val isPenaltyQuest = log?.isPenaltyQuest == true
             repository.setHabitCompleted(habit, today, completed)
+            lastXpGain = if (completed) {
+                XpGain(
+                    amount = Leveling.xpForCompletion(habit.isNonNegotiable, isPenaltyQuest),
+                    stat = habit.stat,
+                    stamp = System.currentTimeMillis(),
+                )
+            } else {
+                null
+            }
         }
+    }
+
+    fun clearXpGain() {
+        lastXpGain = null
+    }
+
+    /** Applies a starter pack from the Today empty state. */
+    fun applyStarterPack(pack: StarterPack) {
+        viewModelScope.launch { repository.applyStarterPack(pack) }
     }
 
     fun dismissRecalibrationNudge() {

@@ -1,12 +1,22 @@
 package com.ascend.app.domain
 
-/** The 5 fixed stat categories every habit is tagged to. See design spec §3. */
-enum class Stat(val displayName: String, val shortLabel: String, val description: String) {
-    STR("Strength", "STR", "Physical / body habits"),
-    VIT("Vitality", "VIT", "Health / maintenance habits"),
-    INT("Intellect", "INT", "Learning / deep work habits"),
-    PER("Perception", "PER", "Mindfulness / awareness habits"),
-    AGI("Agility", "AGI", "Momentum / consistency habits"),
+/**
+ * The 5 fixed stat categories every habit is tagged to. See design spec §3.
+ *
+ * [plainName] exists because "PER" means nothing on its own — the UI always
+ * shows the plain word alongside the RPG label.
+ */
+enum class Stat(
+    val displayName: String,
+    val shortLabel: String,
+    val plainName: String,
+    val description: String,
+) {
+    STR("Strength", "STR", "Body", "Training, cold showers, physical effort"),
+    VIT("Vitality", "VIT", "Health", "Sleep, food, water — how you maintain yourself"),
+    INT("Intellect", "INT", "Mind", "Reading, deep work, learning"),
+    PER("Perception", "PER", "Focus", "Meditation, journaling, staying off your phone"),
+    AGI("Agility", "AGI", "Movement", "Steps, cardio, getting your body moving"),
 }
 
 /** Hunter rank, derived from overall Hunter Level. See design spec §4. */

@@ -56,8 +56,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun ProfileScreen(
     repository: AscendRepository,
-    onOpenWeeklyReview: () -> Unit,
     onOpenLiesTruths: () -> Unit,
+    onOpenHowItWorks: () -> Unit,
 ) {
     val vm: ProfileViewModel = viewModel(factory = SimpleViewModelFactory { ProfileViewModel(repository) })
     val profile by vm.profile.collectAsStateWithLifecycle()
@@ -78,7 +78,7 @@ fun ProfileScreen(
     ) {
         item {
             Text(
-                "PROFILE",
+                "MORE",
                 color = AscendColors.TextPrimary,
                 fontWeight = FontWeight.ExtraBold,
                 fontSize = 22.sp,
@@ -150,8 +150,8 @@ fun ProfileScreen(
         }
 
         item {
-            GlassCard {
-                MenuRow("Weekly Review", onOpenWeeklyReview)
+            GlassCard(accent = AscendColors.AccentBlue) {
+                MenuRow("How it works", onOpenHowItWorks)
                 Spacer(Modifier.height(4.dp))
                 MenuRow("Lies vs Truths", onOpenLiesTruths)
             }

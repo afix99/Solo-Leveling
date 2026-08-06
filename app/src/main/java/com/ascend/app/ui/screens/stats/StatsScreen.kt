@@ -51,7 +51,13 @@ fun StatsScreen(repository: AscendRepository) {
             color = AscendColors.TextPrimary,
             fontWeight = FontWeight.ExtraBold,
             fontSize = 22.sp,
-            modifier = Modifier.padding(start = 20.dp, top = 24.dp, bottom = 4.dp),
+            modifier = Modifier.padding(start = 20.dp, top = 24.dp, bottom = 2.dp),
+        )
+        Text(
+            "Each habit feeds one of these. Complete habits to level them up.",
+            color = AscendColors.TextSecondary,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 4.dp),
         )
         LazyColumn(
             contentPadding = PaddingValues(20.dp),
@@ -76,9 +82,10 @@ private fun StatCard(card: StatCardState) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column {
-                Eyebrow(card.stat.displayName, color = color)
+                Eyebrow("${card.stat.plainName} · ${card.stat.shortLabel}", color = color)
                 Spacer(Modifier.height(4.dp))
                 Text("Level ${card.level}", color = AscendColors.TextPrimary, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+                Text(card.stat.description, color = AscendColors.TextTertiary, fontSize = 11.sp)
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text("${card.completionsThisWeek}", color = color, fontWeight = FontWeight.Bold, fontSize = 20.sp)
