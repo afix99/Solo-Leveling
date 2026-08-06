@@ -38,6 +38,10 @@ level-up/rank-up mechanic.
 ### Habit
 - id, name, assigned `Stat`, `isNonNegotiable: Boolean`, reminder time (optional),
   `createdAt`, `archived: Boolean`
+- `isFocusEnabled: Boolean`, `targetDurationMinutes: Int?` — for habits that make
+  sense as a timed Focus Session (deep work, reading, etc.)
+- `lastThreeDifficultyRatings: List<DifficultyRating>` (max 3, rolling) — drives
+  the "raise your target" suggestion (see §4)
 - User-created only (no preloaded habit list) — creation flow suggests a default
   stat from keyword matching but user can override
 
@@ -59,7 +63,24 @@ level-up/rank-up mechanic.
 
 ### WeeklyReview (generated, cached)
 - weekStart/weekEnd, completionPercent, xpByStat, bestDay, worstDay,
-  userReflectionNote (free text, editable)
+  userReflectionNote (free text, editable), highlighted Evidence Log entries
+  from that week
+
+### FocusSession
+- id, habitId, startTime, plannedDurationMinutes, actualDurationSeconds,
+  `completed: Boolean` (finished without leaving the app early),
+  `difficultyRating: DifficultyRating?` (TOO_EASY / JUST_RIGHT / TOO_HARD,
+  captured immediately after the session ends)
+
+### EvidenceLogEntry (auto-generated, read-only)
+- id, `type` (PENALTY_REDEMPTION / STREAK_MILESTONE / HARD_FOCUS_SESSION),
+  description (short, generated from the source event), date, sourceId
+  (references the DailyLog or FocusSession that created it)
+- Created automatically by app logic when: a Penalty Quest is completed, a
+  streak hits a milestone (7/30/100 days), or a Focus Session is completed at
+  or beyond its planned duration. No user-authored entries — this is a proof
+  log, not a journal (keeps it evidence-based per self-efficacy theory, not
+  affirmation-based).
 
 ## 4. Leveling & Penalty Mechanics
 
@@ -87,14 +108,48 @@ level-up/rank-up mechanic.
   reset to 0 on a miss, shown on the habit's detail view — separate from XP so
   a bad day dents XP without erasing a long streak's visible history.
 
+## 4.5 Science-Backed Layer
+
+Five features grounded in specific research, each mapped to a concrete
+mechanic rather than left as decoration:
+
+- **Focus Session (Flow theory — Csikszentmihalyi 1990):** for any habit with
+  `isFocusEnabled = true`, launch a full-screen timer from the Habits or
+  Today screen. Notifications are suppressed for the session window. Leaving
+  the app early marks the session `completed = false` (no bonus, still logs
+  partial duration). Finishing at/beyond the planned duration awards bonus XP
+  on top of the habit's normal completion XP.
+- **Post-session difficulty rating (Deliberate practice — Ericsson et al.
+  1993):** immediately after a Focus Session ends, a single-tap prompt: Too
+  Easy / Just Right / Too Hard. Stored on the session and rolled into the
+  habit's `lastThreeDifficultyRatings`. Three consecutive "Too Easy" ratings
+  surface a one-time suggestion next time that habit is edited: raise
+  `targetDurationMinutes`. Never auto-changes the target.
+- **Evidence Log (Self-efficacy theory — Bandura 1977):** auto-populated,
+  read-only feed of proof events (see EvidenceLogEntry above), shown on
+  Profile and referenced in Weekly Review. Deliberately not a
+  user-editable affirmations list — the point is it's evidence, not a pep
+  talk.
+- **Cognitive-load-aware Today layout (Sweller 1988):** a layout rule, not a
+  new screen — Non-Negotiables always shown expanded and first; Other Habits
+  collapsed under a disclosure row until all Non-Negotiables are complete for
+  the day. Keeps the always-visible task count small.
+- **Recalibration nudge (Yerkes-Dodson law — 1908):** if 3 or more
+  Non-Negotiable misses occur in a rolling 7-day window, Home shows a single
+  dismissible banner suggesting the user review/reduce their Non-Negotiables
+  in the Habits screen. Purely a suggestion — no automatic changes, shown at
+  most once per rolling window.
+
 ## 5. Screens
 
 1. **Onboarding** — hunter name entry, brief explainer of stats/ranks, create
    first few habits.
 2. **Today (Home)** — Hunter Level/Rank badge + XP ring at top; Penalty Quests
-   (if any) pinned first in amber; Non-Negotiables checklist; Other Habits
-   checklist; occasional Lie/Truth nudge card late in the day if
-   non-negotiables remain unchecked.
+   (if any) pinned first in amber; Non-Negotiables checklist (always
+   expanded); Other Habits collapsed until Non-Negotiables are complete
+   (§4.5 cognitive-load rule); occasional Lie/Truth nudge card late in the
+   day if non-negotiables remain unchecked; Recalibration banner when
+   triggered (§4.5).
 3. **Stats** — 5 stat cards (level, XP bar, short trend); tap through to a
    per-stat history list.
 4. **Habits** — list/create/edit/archive habits; assign stat, toggle
@@ -103,8 +158,10 @@ level-up/rank-up mechanic.
    best/worst day, streak notes) + editable reflection text box; list of past
    weeks.
 6. **Lies vs Truths** — CRUD list of excuse → truth pairs; toggle active/retired.
-7. **Profile/Settings** — hunter name, notification times, data export
-   (local JSON) and reset.
+7. **Focus Session** — full-screen timer for a focus-enabled habit; suppresses
+   notifications during the session; ends with the difficulty-rating prompt.
+8. **Profile/Settings** — hunter name, notification times, data export
+   (local JSON) and reset; includes the **Evidence Log** feed.
 
 ## 6. Visual Design
 
