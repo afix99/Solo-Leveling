@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ASCEND is fully offline; this explicitly denies all cleartext and blocks
+     network use even if a dependency attempts it. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

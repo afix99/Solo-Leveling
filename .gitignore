@@ -1,0 +1,21 @@
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Android SDK fetched into the repo root during this build — not source, ~1GB+.
+/android-sdk/
+
+# Build outputs (the release APK is delivered separately, not committed).
+/app/build/
+*.apk
+*.aab
+
+# Keep the OFL license text but not any stray sdk zips.
+*.zip
