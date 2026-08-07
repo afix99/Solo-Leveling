@@ -58,14 +58,29 @@ interface DailyLogDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(log: DailyLogEntity): Long
 
-    @Query("SELECT MAX(streakAtCompletion) FROM daily_logs WHERE habitId = :habitId AND completed = 1")
-    suspend fun currentStreak(habitId: Long): Int?
+    @Query("SELECT COUNT(*) FROM daily_logs WHERE completed = 1")
+    suspend fun totalCompletions(): Int
+
+    @Query("SELECT COALESCE(MAX(streakAtCompletion), 0) FROM daily_logs WHERE completed = 1")
+    suspend fun longestStreak(): Int
+
+    @Query("SELECT COALESCE(MAX(streakAtCompletion), 0) FROM daily_logs WHERE habitId = :habitId AND completed = 1")
+    suspend fun longestStreakForHabit(habitId: Long): Int
+
+    @Query("SELECT COUNT(*) FROM daily_logs WHERE completed = 1 AND isPenaltyQuest = 1")
+    suspend fun penaltyQuestsRedeemed(): Int
+
+    @Query("SELECT habitId FROM daily_logs WHERE date = :date AND completed = 1")
+    suspend fun completedHabitIdsOn(date: String): List<Long>
 }
 
 @Dao
 interface StatProgressDao {
     @Query("SELECT * FROM stat_progress")
     fun observeAll(): Flow<List<StatProgressEntity>>
+
+    @Query("SELECT * FROM stat_progress")
+    suspend fun getAll(): List<StatProgressEntity>
 
     @Query("SELECT * FROM stat_progress WHERE stat = :stat")
     suspend fun get(stat: Stat): StatProgressEntity?
@@ -124,11 +139,71 @@ interface FocusSessionDao {
     @Query("SELECT * FROM focus_sessions ORDER BY startTimeEpochMillis DESC")
     fun observeAll(): Flow<List<FocusSessionEntity>>
 
+    @Query("SELECT COUNT(*) FROM focus_sessions WHERE completed = 1")
+    suspend fun completedCount(): Int
+
+    @Query("SELECT COALESCE(SUM(actualDurationSeconds), 0) / 60 FROM focus_sessions WHERE completed = 1")
+    suspend fun completedMinutesTotal(): Int
+
+    @Query(
+        "SELECT COUNT(*) FROM focus_sessions WHERE completed = 1 " +
+            "AND startTimeEpochMillis BETWEEN :start AND :end",
+    )
+    suspend fun completedCountBetween(start: Long, end: Long): Int
+
     @Insert
     suspend fun insert(entity: FocusSessionEntity): Long
 
     @Update
     suspend fun update(entity: FocusSessionEntity)
+}
+
+@Dao
+interface RewardDao {
+    @Query("SELECT * FROM rewards WHERE archived = 0 ORDER BY goldCost ASC")
+    fun observeActive(): Flow<List<RewardEntity>>
+
+    @Query("SELECT * FROM rewards WHERE id = :id")
+    suspend fun getById(id: Long): RewardEntity?
+
+    @Insert
+    suspend fun insert(entity: RewardEntity): Long
+
+    @Update
+    suspend fun update(entity: RewardEntity)
+}
+
+@Dao
+interface RewardPurchaseDao {
+    @Query("SELECT * FROM reward_purchases ORDER BY purchasedAtEpochMillis DESC")
+    fun observeAll(): Flow<List<RewardPurchaseEntity>>
+
+    @Insert
+    suspend fun insert(entity: RewardPurchaseEntity): Long
+}
+
+@Dao
+interface UnlockedAchievementDao {
+    @Query("SELECT * FROM unlocked_achievements ORDER BY unlockedAtEpochMillis DESC")
+    fun observeAll(): Flow<List<UnlockedAchievementEntity>>
+
+    @Query("SELECT achievementId FROM unlocked_achievements")
+    suspend fun unlockedIds(): List<String>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(entity: UnlockedAchievementEntity)
+}
+
+@Dao
+interface DailyQuestDao {
+    @Query("SELECT * FROM daily_quests WHERE date = :date LIMIT 1")
+    fun observeForDate(date: String): Flow<DailyQuestEntity?>
+
+    @Query("SELECT * FROM daily_quests WHERE date = :date LIMIT 1")
+    suspend fun getForDate(date: String): DailyQuestEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(entity: DailyQuestEntity)
 }
 
 @Dao

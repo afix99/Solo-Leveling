@@ -2,19 +2,31 @@ package com.ascend.app.data.repo
 
 import com.ascend.app.data.db.AscendDatabase
 import com.ascend.app.data.db.DailyLogEntity
+import com.ascend.app.data.db.DailyQuestEntity
 import com.ascend.app.data.db.EvidenceLogEntryEntity
 import com.ascend.app.data.db.FocusSessionEntity
 import com.ascend.app.data.db.HabitEntity
 import com.ascend.app.data.db.HunterProfileEntity
 import com.ascend.app.data.db.LieTruthEntity
+import com.ascend.app.data.db.RewardEntity
+import com.ascend.app.data.db.RewardPurchaseEntity
 import com.ascend.app.data.db.StatProgressEntity
+import com.ascend.app.data.db.UnlockedAchievementEntity
 import com.ascend.app.data.db.WeeklyReviewEntity
+import com.ascend.app.domain.Achievement
+import com.ascend.app.domain.Achievements
+import com.ascend.app.domain.DailyQuests
 import com.ascend.app.domain.DifficultyRating
+import com.ascend.app.domain.Economy
 import com.ascend.app.domain.EvidenceType
+import com.ascend.app.domain.HunterClass
+import com.ascend.app.domain.HunterStats
 import com.ascend.app.domain.Leveling
 import com.ascend.app.domain.StarterPack
 import com.ascend.app.domain.Stat
+import com.ascend.app.domain.StatEffects
 import java.time.LocalDate
+import java.time.ZoneId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -34,6 +46,10 @@ class AscendRepository(private val db: AscendDatabase) {
     private val weeklyReviewDao = db.weeklyReviewDao()
     private val focusSessionDao = db.focusSessionDao()
     private val evidenceLogDao = db.evidenceLogDao()
+    private val rewardDao = db.rewardDao()
+    private val rewardPurchaseDao = db.rewardPurchaseDao()
+    private val unlockedAchievementDao = db.unlockedAchievementDao()
+    private val dailyQuestDao = db.dailyQuestDao()
 
     // ---- Observing state -------------------------------------------------
 
@@ -51,6 +67,12 @@ class AscendRepository(private val db: AscendDatabase) {
     fun observeWeeklyReviews(): Flow<List<WeeklyReviewEntity>> = weeklyReviewDao.observeAll()
     fun observeFocusSessions(): Flow<List<FocusSessionEntity>> = focusSessionDao.observeAll()
     fun observeEvidenceLog(): Flow<List<EvidenceLogEntryEntity>> = evidenceLogDao.observeAll()
+    fun observeRewards(): Flow<List<RewardEntity>> = rewardDao.observeActive()
+    fun observePurchases(): Flow<List<RewardPurchaseEntity>> = rewardPurchaseDao.observeAll()
+    fun observeUnlockedAchievements(): Flow<List<UnlockedAchievementEntity>> =
+        unlockedAchievementDao.observeAll()
+    fun observeDailyQuest(date: LocalDate): Flow<DailyQuestEntity?> =
+        dailyQuestDao.observeForDate(date.toString())
 
     suspend fun getHunterProfile(): HunterProfileEntity = hunterProfileDao.get() ?: HunterProfileEntity()
 
@@ -115,11 +137,19 @@ class AscendRepository(private val db: AscendDatabase) {
      * the streak, and drops Evidence Log entries for streak milestones and
      * penalty-quest redemptions. See design spec §4.
      */
-    suspend fun setHabitCompleted(habit: HabitEntity, date: LocalDate, completed: Boolean) {
+    /** What a completion actually paid out, so the UI can show it. */
+    data class CompletionResult(val xp: Int, val gold: Int, val streak: Int, val streakBonusPercent: Int)
+
+    suspend fun setHabitCompleted(
+        habit: HabitEntity,
+        date: LocalDate,
+        completed: Boolean,
+    ): CompletionResult {
         val dateStr = date.toString()
         val existing = dailyLogDao.getForHabitAndDate(habit.id, dateStr)
         val isPenaltyQuest = existing?.isPenaltyQuest ?: false
         val previousXp = existing?.xpAwarded ?: 0
+        val previousGold = existing?.goldAwarded ?: 0
 
         val newStreak = if (completed) {
             val yesterday = dailyLogDao.getForHabitAndDate(habit.id, date.minusDays(1).toString())
@@ -129,7 +159,31 @@ class AscendRepository(private val db: AscendDatabase) {
             0
         }
 
-        val newXp = if (completed) Leveling.xpForCompletion(habit.isNonNegotiable, isPenaltyQuest) else 0
+        val profile = getHunterProfile()
+        val levels = statLevels()
+        val baseXp = Leveling.xpForCompletion(habit.isNonNegotiable, isPenaltyQuest)
+        val baseGold = Economy.goldForCompletion(habit.isNonNegotiable, isPenaltyQuest)
+
+        val newXp = if (completed) {
+            StatEffects.finalXp(
+                baseXp = baseXp,
+                mindLevel = levels.getValue(Stat.INT),
+                streakDays = newStreak,
+                movementLevel = levels.getValue(Stat.AGI),
+                classXpBonusPercent = profile.hunterClass.xpBonusPercent,
+            )
+        } else {
+            0
+        }
+        val newGold = if (completed) {
+            StatEffects.finalGold(
+                baseGold = baseGold,
+                bodyLevel = levels.getValue(Stat.STR),
+                classGoldBonusPercent = profile.hunterClass.goldBonusPercent,
+            )
+        } else {
+            0
+        }
 
         dailyLogDao.upsert(
             DailyLogEntity(
@@ -138,6 +192,7 @@ class AscendRepository(private val db: AscendDatabase) {
                 date = dateStr,
                 completed = completed,
                 xpAwarded = newXp,
+                goldAwarded = newGold,
                 isPenaltyQuest = isPenaltyQuest,
                 streakAtCompletion = newStreak,
             ),
@@ -145,6 +200,8 @@ class AscendRepository(private val db: AscendDatabase) {
 
         val xpDelta = newXp - previousXp
         if (xpDelta != 0) adjustStatXp(habit.stat, xpDelta)
+        val goldDelta = newGold - previousGold
+        if (goldDelta != 0) addGold(goldDelta)
 
         if (completed && Leveling.isStreakMilestone(newStreak)) {
             logEvidence(
@@ -160,6 +217,53 @@ class AscendRepository(private val db: AscendDatabase) {
                 habit.id,
             )
         }
+
+        if (completed) recordPerfectDayIfEarned(date)
+
+        return CompletionResult(
+            xp = newXp,
+            gold = newGold,
+            streak = newStreak,
+            streakBonusPercent = StatEffects.streakBonusPercent(newStreak, levels.getValue(Stat.AGI)),
+        )
+    }
+
+    /** Current level of every stat, defaulting to 1 for untouched stats. */
+    suspend fun statLevels(): Map<Stat, Int> {
+        val rows = statProgressDao.getAll().associate { it.stat to Leveling.levelForXp(it.xp) }
+        return Stat.entries.associateWith { rows[it] ?: 1 }
+    }
+
+    private suspend fun addGold(delta: Int) {
+        val profile = getHunterProfile()
+        hunterProfileDao.upsert(
+            profile.copy(
+                gold = (profile.gold + delta).coerceAtLeast(0),
+                goldEarnedTotal = profile.goldEarnedTotal + delta.coerceAtLeast(0),
+            ),
+        )
+    }
+
+    /**
+     * Bumps the perfect-day counter the first time a day is fully cleared.
+     * [HunterProfileEntity.lastPerfectDate] guards against a toggle-off/on
+     * farming the counter, without polluting the Evidence Log.
+     */
+    private suspend fun recordPerfectDayIfEarned(date: LocalDate) {
+        val nonNegotiables = habitDao.getActiveHabits().filter { it.isNonNegotiable }
+        if (nonNegotiables.isEmpty()) return
+        val completed = dailyLogDao.completedHabitIdsOn(date.toString()).toSet()
+        if (!nonNegotiables.all { it.id in completed }) return
+
+        val profile = getHunterProfile()
+        if (profile.lastPerfectDate == date.toString()) return
+
+        hunterProfileDao.upsert(
+            profile.copy(
+                perfectDays = profile.perfectDays + 1,
+                lastPerfectDate = date.toString(),
+            ),
+        )
     }
 
     /**
@@ -184,7 +288,14 @@ class AscendRepository(private val db: AscendDatabase) {
             }
 
             val currentXp = statProgressDao.get(habit.stat)?.xp ?: 0
-            statProgressDao.upsert(StatProgressEntity(habit.stat, Leveling.applyPenalty(currentXp)))
+            val penalty = StatEffects.finalPenalty(
+                basePenalty = Leveling.PENALTY_XP_LOSS,
+                healthLevel = statLevels().getValue(Stat.VIT),
+                classPenaltyResistPercent = getHunterProfile().hunterClass.penaltyResistPercent,
+            )
+            statProgressDao.upsert(
+                StatProgressEntity(habit.stat, Leveling.applyPenaltyOf(currentXp, penalty)),
+            )
 
             val nextExisting = dailyLogDao.getForHabitAndDate(habit.id, nextDateStr)
             when {
@@ -251,7 +362,13 @@ class AscendRepository(private val db: AscendDatabase) {
             ),
         )
         if (completedFully) {
-            adjustStatXp(habit.stat, Leveling.FOCUS_SESSION_BONUS_XP)
+            val bonus = StatEffects.finalFocusBonus(
+                baseBonus = Leveling.FOCUS_SESSION_BONUS_XP,
+                focusLevel = statLevels().getValue(Stat.PER),
+                classFocusBonusPercent = getHunterProfile().hunterClass.focusBonusPercent,
+            )
+            adjustStatXp(habit.stat, bonus)
+            addGold(Economy.FOCUS_SESSION_GOLD)
             logEvidence(
                 EvidenceType.HARD_FOCUS_SESSION,
                 "Completed a $plannedDurationMinutes-min focus session on “${habit.name}”",
@@ -324,6 +441,143 @@ class AscendRepository(private val db: AscendDatabase) {
     suspend fun completeOnboarding(hunterName: String) {
         val current = getHunterProfile()
         hunterProfileDao.upsert(current.copy(hunterName = hunterName, onboardingComplete = true))
+    }
+
+    // ---- Rewards shop -------------------------------------------------------
+
+    suspend fun createReward(name: String, goldCost: Int): Long =
+        rewardDao.insert(RewardEntity(name = name, goldCost = goldCost, createdAt = System.currentTimeMillis()))
+
+    suspend fun archiveReward(rewardId: Long) {
+        rewardDao.getById(rewardId)?.let { rewardDao.update(it.copy(archived = true)) }
+    }
+
+    /** Spends gold on a reward. Returns false (and changes nothing) if the
+     * balance can't cover it. */
+    suspend fun purchaseReward(rewardId: Long): Boolean {
+        val reward = rewardDao.getById(rewardId) ?: return false
+        val profile = getHunterProfile()
+        if (profile.gold < reward.goldCost) return false
+
+        hunterProfileDao.upsert(profile.copy(gold = profile.gold - reward.goldCost))
+        rewardDao.update(reward.copy(timesPurchased = reward.timesPurchased + 1))
+        rewardPurchaseDao.insert(
+            RewardPurchaseEntity(
+                rewardId = reward.id,
+                rewardName = reward.name,
+                goldSpent = reward.goldCost,
+                purchasedAtEpochMillis = System.currentTimeMillis(),
+            ),
+        )
+        return true
+    }
+
+    // ---- Achievements & titles ------------------------------------------------
+
+    /** Gathers everything the achievement conditions need to evaluate. */
+    suspend fun currentHunterStats(): HunterStats {
+        val profile = getHunterProfile()
+        val totalXp = statProgressDao.getAll().sumOf { it.xp }
+        return HunterStats(
+            totalCompletions = dailyLogDao.totalCompletions(),
+            longestStreak = dailyLogDao.longestStreak(),
+            penaltyQuestsRedeemed = dailyLogDao.penaltyQuestsRedeemed(),
+            focusSessionsCompleted = focusSessionDao.completedCount(),
+            focusMinutesTotal = focusSessionDao.completedMinutesTotal(),
+            hunterLevel = Leveling.hunterLevelForTotalXp(totalXp),
+            rank = Leveling.rankForTotalXp(totalXp),
+            perfectDays = profile.perfectDays,
+            perfectWeeks = profile.perfectWeeks,
+            goldEarnedTotal = profile.goldEarnedTotal,
+            maxStatLevel = statLevels().values.maxOrNull() ?: 1,
+        )
+    }
+
+    /**
+     * Evaluates every achievement, banking gold and recording unlocks for any
+     * newly satisfied ones. Returns them so the UI can announce them.
+     */
+    suspend fun checkAchievements(): List<Achievement> {
+        val unlocked = unlockedAchievementDao.unlockedIds().toSet()
+        val newly = Achievements.newlyUnlocked(currentHunterStats(), unlocked)
+        if (newly.isEmpty()) return emptyList()
+
+        val now = System.currentTimeMillis()
+        for (achievement in newly) {
+            unlockedAchievementDao.insert(UnlockedAchievementEntity(achievement.id, now))
+            addGold(achievement.goldReward)
+        }
+        return newly
+    }
+
+    suspend fun equipTitle(titleId: String?) {
+        hunterProfileDao.upsert(getHunterProfile().copy(equippedTitleId = titleId))
+    }
+
+    suspend fun setHunterClass(hunterClass: HunterClass) {
+        hunterProfileDao.upsert(getHunterProfile().copy(hunterClass = hunterClass))
+    }
+
+    // ---- Daily quest ------------------------------------------------------------
+
+    /** Issues today's quest if one hasn't been generated yet. */
+    suspend fun ensureDailyQuest(date: LocalDate): DailyQuestEntity? {
+        dailyQuestDao.getForDate(date.toString())?.let { return it }
+
+        val habits = habitDao.getActiveHabits()
+        val byId = habits.associateBy { it.id }
+        val generated = DailyQuests.generate(
+            dateSeed = date.toEpochDay(),
+            nonNegotiables = habits.filter { it.isNonNegotiable }.map { it.id },
+            optionalHabits = habits.filterNot { it.isNonNegotiable }.map { it.id },
+            focusHabits = habits.filter { it.isFocusEnabled }.map { it.id },
+            habitNameOf = { id -> byId[id]?.name ?: "a habit" },
+        ) ?: return null
+
+        val entity = DailyQuestEntity(
+            date = date.toString(),
+            kind = generated.kind,
+            description = generated.description,
+            targetCount = generated.targetCount,
+            targetHabitId = generated.targetHabitId,
+            xpReward = generated.xpReward,
+            goldReward = generated.goldReward,
+        )
+        dailyQuestDao.upsert(entity)
+        return entity
+    }
+
+    /** Current progress on today's quest, or null if there isn't one. */
+    suspend fun dailyQuestProgress(date: LocalDate): Int? {
+        val quest = dailyQuestDao.getForDate(date.toString()) ?: return null
+        val habits = habitDao.getActiveHabits()
+        val startOfDay = date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val endOfDay = date.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        return DailyQuests.progress(
+            kind = quest.kind,
+            targetHabitId = quest.targetHabitId,
+            targetCount = quest.targetCount,
+            completedHabitIds = dailyLogDao.completedHabitIdsOn(date.toString()).toSet(),
+            nonNegotiables = habits.filter { it.isNonNegotiable }.map { it.id },
+            optionalHabits = habits.filterNot { it.isNonNegotiable }.map { it.id },
+            focusSessionsToday = focusSessionDao.completedCountBetween(startOfDay, endOfDay),
+        )
+    }
+
+    /** Pays out today's quest if it's complete and hasn't been claimed. */
+    suspend fun claimDailyQuest(date: LocalDate): DailyQuestEntity? {
+        val quest = dailyQuestDao.getForDate(date.toString()) ?: return null
+        if (quest.claimed) return null
+        val progress = dailyQuestProgress(date) ?: return null
+        if (progress < quest.targetCount) return null
+
+        dailyQuestDao.upsert(quest.copy(claimed = true))
+        // Quest XP is split evenly across all five stats so it advances the
+        // Hunter Level without distorting any single stat's meaning.
+        val perStat = (quest.xpReward / Stat.entries.size).coerceAtLeast(1)
+        Stat.entries.forEach { adjustStatXp(it, perStat) }
+        addGold(quest.goldReward)
+        return quest
     }
 
     /** Wipes every table — used by Settings' "Reset data". Irreversible. */

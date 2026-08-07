@@ -10,6 +10,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.ShoppingBag
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -34,11 +35,14 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.ascend.app.data.repo.AscendRepository
+import com.ascend.app.domain.Leveling
+import com.ascend.app.ui.screens.achievements.AchievementsScreen
 import com.ascend.app.ui.screens.habits.HabitsScreen
 import com.ascend.app.ui.screens.help.HowItWorksScreen
 import com.ascend.app.ui.screens.liestruths.LieTruthScreen
 import com.ascend.app.ui.screens.onboarding.OnboardingScreen
 import com.ascend.app.ui.screens.profile.ProfileScreen
+import com.ascend.app.ui.screens.shop.ShopScreen
 import com.ascend.app.ui.screens.stats.StatsScreen
 import com.ascend.app.ui.screens.today.TodayScreen
 import com.ascend.app.ui.screens.weeklyreview.WeeklyReviewScreen
@@ -48,13 +52,15 @@ private sealed class Dest(val route: String, val label: String, val icon: ImageV
     data object Today : Dest("today", "Today", Icons.Default.Home)
     data object Stats : Dest("stats", "Stats", Icons.Default.Bolt)
     data object Habits : Dest("habits", "Habits", Icons.Default.List)
-    data object Review : Dest("weekly_review", "Review", Icons.Default.Insights)
+    data object Shop : Dest("shop", "Shop", Icons.Default.ShoppingBag)
     data object Profile : Dest("profile", "More", Icons.Default.Person)
 }
 
-private val bottomTabs = listOf(Dest.Today, Dest.Stats, Dest.Habits, Dest.Review, Dest.Profile)
+private val bottomTabs = listOf(Dest.Today, Dest.Stats, Dest.Habits, Dest.Shop, Dest.Profile)
 private const val ROUTE_LIES_TRUTHS = "lies_truths"
 private const val ROUTE_HOW_IT_WORKS = "how_it_works"
+private const val ROUTE_WEEKLY_REVIEW = "weekly_review"
+private const val ROUTE_ACHIEVEMENTS = "achievements"
 
 @Composable
 fun AscendApp(repository: AscendRepository) {
@@ -132,16 +138,26 @@ private fun MainScaffold(repository: AscendRepository) {
                 }
                 composable(Dest.Stats.route) { StatsScreen(repository = repository) }
                 composable(Dest.Habits.route) { HabitsScreen(repository = repository) }
-                composable(Dest.Review.route) { WeeklyReviewScreen(repository = repository) }
+                composable(Dest.Shop.route) { ShopScreen(repository = repository) }
                 composable(Dest.Profile.route) {
                     ProfileScreen(
                         repository = repository,
                         onOpenLiesTruths = { navController.navigate(ROUTE_LIES_TRUTHS) },
                         onOpenHowItWorks = { navController.navigate(ROUTE_HOW_IT_WORKS) },
+                        onOpenWeeklyReview = { navController.navigate(ROUTE_WEEKLY_REVIEW) },
+                        onOpenAchievements = { navController.navigate(ROUTE_ACHIEVEMENTS) },
                     )
                 }
+                composable(ROUTE_WEEKLY_REVIEW) { WeeklyReviewScreen(repository = repository) }
                 composable(ROUTE_LIES_TRUTHS) { LieTruthScreen(repository = repository) }
                 composable(ROUTE_HOW_IT_WORKS) { HowItWorksScreen() }
+                composable(ROUTE_ACHIEVEMENTS) {
+                    val totalXp by repository.observeTotalXp().collectAsStateWithLifecycle(initialValue = 0)
+                    AchievementsScreen(
+                        repository = repository,
+                        currentRank = Leveling.rankForTotalXp(totalXp),
+                    )
+                }
             }
         }
     }

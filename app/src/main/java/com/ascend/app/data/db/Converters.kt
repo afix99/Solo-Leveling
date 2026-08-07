@@ -1,11 +1,26 @@
 package com.ascend.app.data.db
 
 import androidx.room.TypeConverter
+import com.ascend.app.domain.DailyQuestKind
 import com.ascend.app.domain.DifficultyRating
 import com.ascend.app.domain.EvidenceType
+import com.ascend.app.domain.HunterClass
 import com.ascend.app.domain.Stat
 
 class Converters {
+    @TypeConverter
+    fun hunterClassToString(value: HunterClass): String = value.name
+
+    @TypeConverter
+    fun stringToHunterClass(value: String): HunterClass =
+        runCatching { HunterClass.valueOf(value) }.getOrDefault(HunterClass.NONE)
+
+    @TypeConverter
+    fun questKindToString(value: DailyQuestKind): String = value.name
+
+    @TypeConverter
+    fun stringToQuestKind(value: String): DailyQuestKind = DailyQuestKind.valueOf(value)
+
     @TypeConverter
     fun statToString(stat: Stat): String = stat.name
 

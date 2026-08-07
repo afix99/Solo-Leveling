@@ -45,8 +45,11 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ascend.app.data.db.DailyLogEntity
+import com.ascend.app.data.db.DailyQuestEntity
 import com.ascend.app.data.db.HabitEntity
 import com.ascend.app.data.repo.AscendRepository
+import com.ascend.app.domain.Achievements
+import com.ascend.app.domain.HunterClass
 import com.ascend.app.domain.Leveling
 import com.ascend.app.domain.Rank
 import com.ascend.app.domain.StarterHabits
@@ -59,6 +62,9 @@ import com.ascend.app.ui.components.GlassCard
 import com.ascend.app.ui.components.Pill
 import com.ascend.app.ui.components.CircularProgressRing
 import com.ascend.app.ui.components.ProgressBar
+import com.ascend.app.ui.components.SystemMessage
+import com.ascend.app.ui.components.SystemPanel
+import com.ascend.app.ui.components.SystemWindow
 import com.ascend.app.ui.theme.AscendColors
 import com.ascend.app.ui.theme.color
 import java.time.LocalTime
@@ -72,6 +78,7 @@ fun TodayScreen(repository: AscendRepository, onOpenHabits: () -> Unit) {
     val logs by vm.logsToday.collectAsStateWithLifecycle()
     val totalXp by vm.totalXp.collectAsStateWithLifecycle()
     val hunterProfile by vm.hunterProfile.collectAsStateWithLifecycle()
+    val dailyQuest by vm.dailyQuest.collectAsStateWithLifecycle()
 
     val logsByHabit = remember(logs) { logs.associateBy { it.habitId } }
     val nonNegotiables = remember(habits) { habits.filter { it.isNonNegotiable } }
@@ -133,7 +140,20 @@ fun TodayScreen(repository: AscendRepository, onOpenHabits: () -> Unit) {
                 HunterHeader(
                     hunterName = hunterProfile?.hunterName ?: "Hunter",
                     totalXp = totalXp,
+                    gold = hunterProfile?.gold ?: 0,
+                    titleText = Achievements.titleById(hunterProfile?.equippedTitleId)?.text,
+                    hunterClass = hunterProfile?.hunterClass ?: HunterClass.NONE,
                 )
+            }
+
+            dailyQuest?.let { quest ->
+                item {
+                    DailyQuestCard(
+                        quest = quest,
+                        progress = vm.questProgress,
+                        onClaim = vm::claimDailyQuest,
+                    )
+                }
             }
 
             if (vm.showRecalibrationNudge && !vm.recalibrationDismissed) {
@@ -230,8 +250,58 @@ fun TodayScreen(repository: AscendRepository, onOpenHabits: () -> Unit) {
             }
         }
 
-        rankUpToShow?.let { rank ->
-            RankUpOverlay(rank = rank, onDismiss = { rankUpToShow = null })
+        // System windows, in priority order — only one is ever on screen.
+        val questClaimed = vm.questClaimed
+        val newQuest = vm.newQuestAnnouncement
+        val achievement = vm.pendingAchievements.firstOrNull()
+        when {
+            rankUpToShow != null -> RankUpOverlay(
+                rank = rankUpToShow!!,
+                onDismiss = { rankUpToShow = null },
+            )
+
+            achievement != null -> SystemWindow(
+                message = SystemMessage(
+                    heading = "Achievement unlocked",
+                    title = achievement.name,
+                    body = achievement.description,
+                    lines = buildList {
+                        add("+${achievement.goldReward} Gold")
+                        Achievements.titleById(achievement.titleId)?.let { add("Title earned: ${it.text}") }
+                    },
+                    accent = AscendColors.Success,
+                ),
+                onDismiss = vm::dismissFirstAchievement,
+            )
+
+            questClaimed != null -> SystemWindow(
+                message = SystemMessage(
+                    heading = "Quest complete",
+                    title = "Daily Quest cleared",
+                    body = questClaimed.description,
+                    lines = listOf(
+                        "+${questClaimed.xpReward} XP",
+                        "+${questClaimed.goldReward} Gold",
+                    ),
+                    accent = AscendColors.Amber,
+                ),
+                onDismiss = vm::dismissQuestClaimed,
+            )
+
+            newQuest != null -> SystemWindow(
+                message = SystemMessage(
+                    heading = "Notification",
+                    title = "Daily Quest has arrived",
+                    body = newQuest.description,
+                    lines = listOf(
+                        "Reward: ${newQuest.xpReward} XP",
+                        "Reward: ${newQuest.goldReward} Gold",
+                    ),
+                    accent = AscendColors.AccentViolet,
+                    confirmLabel = "Accept",
+                ),
+                onDismiss = vm::dismissQuestAnnouncement,
+            )
         }
     }
 }
@@ -243,12 +313,18 @@ private fun android.content.Context.launchFocusSession(habitId: Long) {
 }
 
 @Composable
-private fun HunterHeader(hunterName: String, totalXp: Int) {
+private fun HunterHeader(
+    hunterName: String,
+    totalXp: Int,
+    gold: Int,
+    titleText: String?,
+    hunterClass: HunterClass,
+) {
     val rank = Leveling.rankForTotalXp(totalXp)
     val hunterLevel = Leveling.hunterLevelForTotalXp(totalXp)
     val progress = Leveling.hunterLevelProgress(totalXp)
 
-    GlassCard(accent = rank.color()) {
+    SystemPanel(accent = rank.color(), modifier = Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             CircularProgressRing(
                 progress = progress.fraction,
@@ -259,16 +335,88 @@ private fun HunterHeader(hunterName: String, totalXp: Int) {
                 Text("$hunterLevel", color = AscendColors.TextPrimary, fontWeight = FontWeight.ExtraBold, fontSize = 26.sp)
             }
             Spacer(Modifier.width(16.dp))
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
+                titleText?.let {
+                    Text(it, color = AscendColors.Amber, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                }
                 Text(hunterName, color = AscendColors.TextPrimary, fontWeight = FontWeight.Bold, fontSize = 20.sp)
                 Spacer(Modifier.height(6.dp))
-                Pill(rank.displayName, rank.color())
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Pill(rank.displayName, rank.color())
+                    if (hunterClass != HunterClass.NONE) {
+                        Spacer(Modifier.width(6.dp))
+                        Pill(hunterClass.displayName, AscendColors.AccentViolet)
+                    }
+                }
                 Spacer(Modifier.height(6.dp))
                 Text(
                     "${progress.xpSpanForLevel - progress.xpIntoLevel} XP to level ${hunterLevel + 1}",
                     color = AscendColors.TextTertiary,
                     fontSize = 11.sp,
                 )
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text("$gold", color = AscendColors.Amber, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
+                Text("GOLD", color = AscendColors.TextTertiary, fontSize = 9.sp, letterSpacing = 1.sp)
+            }
+        }
+    }
+}
+
+/** The System's bonus quest for today, in the cut-corner panel style. */
+@Composable
+private fun DailyQuestCard(quest: DailyQuestEntity, progress: Int, onClaim: () -> Unit) {
+    val complete = progress >= quest.targetCount
+    val accent = when {
+        quest.claimed -> AscendColors.Success
+        complete -> AscendColors.Amber
+        else -> AscendColors.AccentViolet
+    }
+
+    SystemPanel(accent = accent, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Eyebrow("Daily Quest", color = accent)
+            Text(
+                "$progress / ${quest.targetCount}",
+                color = accent,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(quest.description, color = AscendColors.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.height(10.dp))
+        ProgressBar(
+            progress = progress.toFloat() / quest.targetCount.coerceAtLeast(1),
+            fillColor = accent,
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Reward: ${quest.xpReward} XP · ${quest.goldReward} Gold",
+                color = AscendColors.TextSecondary,
+                fontSize = 12.sp,
+            )
+            when {
+                quest.claimed -> Text("Claimed", color = AscendColors.Success, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                complete -> Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(AscendColors.Amber.copy(alpha = 0.22f))
+                        .clickable(onClick = onClaim)
+                        .padding(horizontal = 16.dp, vertical = 7.dp),
+                ) {
+                    Text("Claim", color = AscendColors.Amber, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+                else -> Text("In progress", color = AscendColors.TextTertiary, fontSize = 12.sp)
             }
         }
     }
@@ -452,7 +600,11 @@ private fun XpGainToast(gain: XpGain, onDismiss: () -> Unit) {
             .padding(horizontal = 18.dp, vertical = 9.dp),
     ) {
         Text(
-            "+${gain.amount} XP · ${gain.stat.plainName}",
+            buildString {
+                append("+${gain.amount} XP")
+                append(" · +${gain.gold}g")
+                if (gain.streakBonusPercent > 0) append(" · streak +${gain.streakBonusPercent}%")
+            },
             color = AscendColors.Background,
             fontWeight = FontWeight.Bold,
             fontSize = 13.sp,

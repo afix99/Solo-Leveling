@@ -37,6 +37,7 @@ import com.ascend.app.ui.SimpleViewModelFactory
 import com.ascend.app.ui.components.Eyebrow
 import com.ascend.app.ui.components.GlassCard
 import com.ascend.app.ui.components.ProgressBar
+import com.ascend.app.domain.StatEffects
 import com.ascend.app.ui.theme.AscendColors
 import com.ascend.app.ui.theme.color
 
@@ -96,6 +97,14 @@ private fun StatCard(card: StatCardState) {
         ProgressBar(
             progress = if (card.xpSpanForLevel > 0) card.xpIntoLevel.toFloat() / card.xpSpanForLevel else 0f,
             fillColor = color,
+        )
+        Spacer(Modifier.height(8.dp))
+        // What this stat currently *does* — the thing v1 was missing entirely.
+        Text(
+            StatEffects.describeEffect(card.stat, card.level),
+            color = color,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
         )
         Spacer(Modifier.height(4.dp))
         Row(

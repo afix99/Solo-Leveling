@@ -58,6 +58,8 @@ fun ProfileScreen(
     repository: AscendRepository,
     onOpenLiesTruths: () -> Unit,
     onOpenHowItWorks: () -> Unit,
+    onOpenWeeklyReview: () -> Unit,
+    onOpenAchievements: () -> Unit,
 ) {
     val vm: ProfileViewModel = viewModel(factory = SimpleViewModelFactory { ProfileViewModel(repository) })
     val profile by vm.profile.collectAsStateWithLifecycle()
@@ -151,9 +153,13 @@ fun ProfileScreen(
 
         item {
             GlassCard(accent = AscendColors.AccentBlue) {
-                MenuRow("How it works", onOpenHowItWorks)
+                MenuRow("Achievements & Titles", onOpenAchievements)
+                Spacer(Modifier.height(4.dp))
+                MenuRow("Weekly Review", onOpenWeeklyReview)
                 Spacer(Modifier.height(4.dp))
                 MenuRow("Lies vs Truths", onOpenLiesTruths)
+                Spacer(Modifier.height(4.dp))
+                MenuRow("How it works", onOpenHowItWorks)
             }
         }
 

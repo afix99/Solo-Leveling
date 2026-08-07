@@ -3,8 +3,10 @@ package com.ascend.app.data.db
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.ascend.app.domain.DailyQuestKind
 import com.ascend.app.domain.DifficultyRating
 import com.ascend.app.domain.EvidenceType
+import com.ascend.app.domain.HunterClass
 import com.ascend.app.domain.Stat
 
 @Entity(tableName = "habits")
@@ -32,6 +34,7 @@ data class DailyLogEntity(
     val date: String,
     val completed: Boolean,
     val xpAwarded: Int = 0,
+    val goldAwarded: Int = 0,
     val isPenaltyQuest: Boolean = false,
     val streakAtCompletion: Int = 0,
 )
@@ -52,11 +55,57 @@ data class HunterProfileEntity(
     val eveningReminderMinute: Int = 0,
     val notificationsEnabled: Boolean = true,
     val onboardingComplete: Boolean = false,
+    val gold: Int = 0,
+    val goldEarnedTotal: Int = 0,
+    val equippedTitleId: String? = null,
+    val hunterClass: HunterClass = HunterClass.NONE,
+    val perfectDays: Int = 0,
+    val perfectWeeks: Int = 0,
+    /** ISO date of the most recent fully-cleared day; stops the counter being
+     * farmed by unchecking and rechecking a habit. */
+    val lastPerfectDate: String? = null,
 ) {
     companion object {
         const val SINGLETON_ID = 0
     }
 }
+
+@Entity(tableName = "rewards")
+data class RewardEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val goldCost: Int,
+    val timesPurchased: Int = 0,
+    val createdAt: Long,
+    val archived: Boolean = false,
+)
+
+@Entity(tableName = "reward_purchases")
+data class RewardPurchaseEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val rewardId: Long,
+    val rewardName: String,
+    val goldSpent: Int,
+    val purchasedAtEpochMillis: Long,
+)
+
+@Entity(tableName = "unlocked_achievements")
+data class UnlockedAchievementEntity(
+    @PrimaryKey val achievementId: String,
+    val unlockedAtEpochMillis: Long,
+)
+
+@Entity(tableName = "daily_quests")
+data class DailyQuestEntity(
+    @PrimaryKey val date: String,
+    val kind: DailyQuestKind,
+    val description: String,
+    val targetCount: Int,
+    val targetHabitId: Long? = null,
+    val xpReward: Int,
+    val goldReward: Int,
+    val claimed: Boolean = false,
+)
 
 @Entity(tableName = "lies_truths")
 data class LieTruthEntity(

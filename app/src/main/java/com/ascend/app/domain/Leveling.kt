@@ -67,9 +67,13 @@ object Leveling {
      * XP required for the stat's *current* level — a bad day can't erase a
      * level already earned.
      */
-    fun applyPenalty(currentStatXp: Int): Int {
+    fun applyPenalty(currentStatXp: Int): Int = applyPenaltyOf(currentStatXp, PENALTY_XP_LOSS)
+
+    /** As [applyPenalty], but with the loss already adjusted for Health/class
+     * resistance. The level floor still applies. */
+    fun applyPenaltyOf(currentStatXp: Int, penaltyAmount: Int): Int {
         val floor = xpFloorForLevel(levelForXp(currentStatXp))
-        return (currentStatXp - PENALTY_XP_LOSS).coerceAtLeast(floor)
+        return (currentStatXp - penaltyAmount).coerceAtLeast(floor)
     }
 
     /** Next streak value given whether today was completed. */
