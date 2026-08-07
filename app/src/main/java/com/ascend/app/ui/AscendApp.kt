@@ -2,20 +2,15 @@ package com.ascend.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Insights
-import androidx.compose.material.icons.filled.List
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.ShoppingBag
-import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
-import androidx.compose.material3.Scaffold
+import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.Equalizer
+import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Storefront
+import androidx.compose.material.icons.filled.TaskAlt
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -36,6 +31,8 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.ascend.app.data.repo.AscendRepository
 import com.ascend.app.domain.Leveling
+import com.ascend.app.ui.components.DockItem
+import com.ascend.app.ui.components.SystemDock
 import com.ascend.app.ui.screens.achievements.AchievementsScreen
 import com.ascend.app.ui.screens.habits.HabitsScreen
 import com.ascend.app.ui.screens.help.HowItWorksScreen
@@ -49,11 +46,11 @@ import com.ascend.app.ui.screens.weeklyreview.WeeklyReviewScreen
 import com.ascend.app.ui.theme.AscendColors
 
 private sealed class Dest(val route: String, val label: String, val icon: ImageVector) {
-    data object Today : Dest("today", "Today", Icons.Default.Home)
-    data object Stats : Dest("stats", "Stats", Icons.Default.Bolt)
-    data object Habits : Dest("habits", "Habits", Icons.Default.List)
-    data object Shop : Dest("shop", "Shop", Icons.Default.ShoppingBag)
-    data object Profile : Dest("profile", "More", Icons.Default.Person)
+    data object Today : Dest("today", "Today", Icons.Default.TaskAlt)
+    data object Stats : Dest("stats", "Stats", Icons.Default.Equalizer)
+    data object Habits : Dest("habits", "Habits", Icons.Default.Checklist)
+    data object Shop : Dest("shop", "Shop", Icons.Default.Storefront)
+    data object Profile : Dest("profile", "More", Icons.Default.MoreHoriz)
 }
 
 private val bottomTabs = listOf(Dest.Today, Dest.Stats, Dest.Habits, Dest.Shop, Dest.Profile)
@@ -71,7 +68,10 @@ fun AscendApp(repository: AscendRepository) {
     var onboardedThisSession by remember { mutableStateOf(false) }
 
     Box(
-        modifier = Modifier.fillMaxSize().background(AscendColors.Background),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AscendColors.Background)
+            .statusBarsPadding(),
         contentAlignment = Alignment.Center,
     ) {
         val profile = hunterProfile
@@ -94,44 +94,17 @@ fun AscendApp(repository: AscendRepository) {
 @Composable
 private fun MainScaffold(repository: AscendRepository) {
     val navController = rememberNavController()
+    val backStackEntry by navController.currentBackStackEntryAsState()
+    val currentDestination = backStackEntry?.destination
+    val selectedRoute = bottomTabs.firstOrNull { dest ->
+        currentDestination?.hierarchy?.any { it.route == dest.route } == true
+    }?.route
 
-    Scaffold(
-        containerColor = AscendColors.Background,
-        bottomBar = {
-            val backStackEntry by navController.currentBackStackEntryAsState()
-            val currentDestination = backStackEntry?.destination
-            NavigationBar(containerColor = AscendColors.Surface) {
-                bottomTabs.forEach { dest ->
-                    val selected = currentDestination?.hierarchy?.any { it.route == dest.route } == true
-                    NavigationBarItem(
-                        selected = selected,
-                        onClick = {
-                            navController.navigate(dest.route) {
-                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
-                        icon = { Icon(dest.icon, contentDescription = dest.label) },
-                        label = { Text(dest.label) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = AscendColors.AccentBlue,
-                            selectedTextColor = AscendColors.AccentBlue,
-                            unselectedIconColor = AscendColors.TextTertiary,
-                            unselectedTextColor = AscendColors.TextTertiary,
-                            indicatorColor = AscendColors.SurfaceElevated2,
-                        ),
-                    )
-                }
-            }
-        },
-    ) { padding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(AscendColors.Background)
-                .padding(bottom = padding.calculateBottomPadding()),
-        ) {
+    // Laid out as a Column rather than a Scaffold so the dock reserves its own
+    // space — content can never end up hidden underneath it. statusBarsPadding
+    // keeps the header clear of the clock and battery icons.
+    Column(modifier = Modifier.fillMaxSize().background(AscendColors.Background)) {
+        Box(modifier = Modifier.weight(1f).fillMaxSize()) {
             NavHost(navController = navController, startDestination = Dest.Today.route) {
                 composable(Dest.Today.route) {
                     TodayScreen(repository = repository, onOpenHabits = { navController.navigate(Dest.Habits.route) })
@@ -160,5 +133,17 @@ private fun MainScaffold(repository: AscendRepository) {
                 }
             }
         }
+
+        SystemDock(
+            items = bottomTabs.map { DockItem(route = it.route, label = it.label, icon = it.icon) },
+            selectedRoute = selectedRoute,
+            onSelect = { route ->
+                navController.navigate(route) {
+                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                    launchSingleTop = true
+                    restoreState = true
+                }
+            },
+        )
     }
 }

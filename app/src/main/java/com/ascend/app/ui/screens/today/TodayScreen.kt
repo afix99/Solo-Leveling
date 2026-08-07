@@ -2,13 +2,16 @@ package com.ascend.app.ui.screens.today
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -133,8 +136,10 @@ fun TodayScreen(repository: AscendRepository, onOpenHabits: () -> Unit) {
     Box(modifier = Modifier.fillMaxSize().background(AscendColors.Background)) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 14.dp, bottom = 28.dp),
+            // Tight enough that the whole list reads as one block rather than
+            // seven floating cards.
+            verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {
             item {
                 HunterHeader(
@@ -180,7 +185,12 @@ fun TodayScreen(repository: AscendRepository, onOpenHabits: () -> Unit) {
             }
 
             if (nonNegotiables.isNotEmpty()) {
-                item { Eyebrow("Non-negotiables · must do today") }
+                item {
+                    Eyebrow(
+                        "Non-negotiables · must do today",
+                        modifier = Modifier.padding(top = 8.dp, bottom = 2.dp),
+                    )
+                }
             }
             items(nonNegotiables, key = { "nn-${it.id}" }) { habit ->
                 HabitRow(
@@ -197,7 +207,8 @@ fun TodayScreen(repository: AscendRepository, onOpenHabits: () -> Unit) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { otherExpanded = !otherExpanded },
+                            .clickable { otherExpanded = !otherExpanded }
+                            .padding(top = 8.dp, bottom = 2.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -328,19 +339,32 @@ private fun HunterHeader(
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             CircularProgressRing(
                 progress = progress.fraction,
-                diameter = 92.dp,
-                strokeWidth = 8.dp,
+                diameter = 62.dp,
+                strokeWidth = 5.dp,
                 progressColor = rank.color(),
             ) {
-                Text("$hunterLevel", color = AscendColors.TextPrimary, fontWeight = FontWeight.ExtraBold, fontSize = 26.sp)
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        "$hunterLevel",
+                        color = AscendColors.TextPrimary,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 22.sp,
+                    )
+                    Text(
+                        "LV",
+                        color = AscendColors.TextTertiary,
+                        fontSize = 7.sp,
+                        letterSpacing = 1.sp,
+                    )
+                }
             }
-            Spacer(Modifier.width(16.dp))
+            Spacer(Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
                 titleText?.let {
-                    Text(it, color = AscendColors.Amber, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    Text(it, color = AscendColors.Amber, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
                 }
-                Text(hunterName, color = AscendColors.TextPrimary, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                Spacer(Modifier.height(6.dp))
+                Text(hunterName, color = AscendColors.TextPrimary, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                Spacer(Modifier.height(5.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Pill(rank.displayName, rank.color())
                     if (hunterClass != HunterClass.NONE) {
@@ -348,18 +372,48 @@ private fun HunterHeader(
                         Pill(hunterClass.displayName, AscendColors.AccentViolet)
                     }
                 }
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "${progress.xpSpanForLevel - progress.xpIntoLevel} XP to level ${hunterLevel + 1}",
-                    color = AscendColors.TextTertiary,
-                    fontSize = 11.sp,
-                )
             }
-            Column(horizontalAlignment = Alignment.End) {
-                Text("$gold", color = AscendColors.Amber, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
-                Text("GOLD", color = AscendColors.TextTertiary, fontSize = 9.sp, letterSpacing = 1.sp)
-            }
+            GoldChip(gold)
         }
+
+        Spacer(Modifier.height(14.dp))
+        ProgressBar(progress = progress.fraction, fillColor = rank.color(), height = 5.dp)
+        Spacer(Modifier.height(6.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                "${progress.xpIntoLevel} / ${progress.xpSpanForLevel} XP",
+                color = AscendColors.TextTertiary,
+                fontSize = 10.sp,
+            )
+            Text(
+                "${progress.xpSpanForLevel - progress.xpIntoLevel} to LV ${hunterLevel + 1}",
+                color = AscendColors.TextTertiary,
+                fontSize = 10.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun GoldChip(gold: Int) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(AscendColors.Amber.copy(alpha = 0.14f))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(7.dp)
+                .clip(CircleShape)
+                .background(AscendColors.Amber),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text("$gold", color = AscendColors.Amber, fontWeight = FontWeight.Bold, fontSize = 14.sp)
     }
 }
 
@@ -478,63 +532,103 @@ private fun HabitRow(
     onFocus: () -> Unit,
 ) {
     val completed = log?.completed == true
+    val statColor = habit.stat.color()
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(AscendColors.Surface)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .height(IntrinsicSize.Min)
+            .clip(RoundedCornerShape(14.dp))
+            .background(AscendColors.Surface),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // The stat reads as a quiet edge stripe instead of a shouty pill, so
+        // the habit name is the loudest thing in the row.
         Box(
             modifier = Modifier
-                .size(26.dp)
-                .clip(CircleShape)
-                .background(if (completed) accent else AscendColors.SurfaceElevated2)
-                .clickable { onToggle(!completed) },
-            contentAlignment = Alignment.Center,
+                .width(3.dp)
+                .fillMaxHeight()
+                .background(if (completed) statColor.copy(alpha = 0.3f) else statColor),
+        )
+
+        Row(
+            modifier = Modifier.weight(1f).padding(horizontal = 13.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (completed) Icon(Icons.Default.Check, contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                habit.name,
-                color = if (completed) AscendColors.TextTertiary else AscendColors.TextPrimary,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-                textDecoration = if (completed) TextDecoration.LineThrough else null,
-            )
-            if (log?.isPenaltyQuest == true) {
-                Text("Redemption · 1.5× XP", color = AscendColors.Amber, fontSize = 11.sp)
-            }
-        }
-        Pill(habit.stat.plainName, habit.stat.color())
-        if (habit.isFocusEnabled) {
-            Spacer(Modifier.width(6.dp))
-            // Labelled rather than a bare icon — a lone ▶ gave no clue that a
-            // timer existed at all.
-            Row(
+            Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(AscendColors.AccentBlue.copy(alpha = 0.16f))
-                    .clickable(onClick = onFocus)
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .size(23.dp)
+                    .clip(CircleShape)
+                    .background(if (completed) accent else Color.Transparent)
+                    .border(
+                        width = if (completed) 0.dp else 1.5.dp,
+                        color = if (completed) Color.Transparent else AscendColors.TextTertiary,
+                        shape = CircleShape,
+                    )
+                    .clickable { onToggle(!completed) },
+                contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    Icons.Default.PlayArrow,
-                    contentDescription = null,
-                    tint = AscendColors.AccentBlue,
-                    modifier = Modifier.size(14.dp),
-                )
-                Spacer(Modifier.width(3.dp))
+                if (completed) {
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = null,
+                        tint = AscendColors.Background,
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    "${habit.targetDurationMinutes ?: 20}m",
-                    color = AscendColors.AccentBlue,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    habit.name,
+                    color = if (completed) AscendColors.TextTertiary else AscendColors.TextPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    textDecoration = if (completed) TextDecoration.LineThrough else null,
                 )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        habit.stat.plainName.uppercase(),
+                        color = statColor.copy(alpha = if (completed) 0.5f else 0.9f),
+                        fontSize = 9.sp,
+                        letterSpacing = 0.8.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    if (log?.isPenaltyQuest == true) {
+                        Text(
+                            "  ·  REDEMPTION 1.5×",
+                            color = AscendColors.Amber,
+                            fontSize = 9.sp,
+                            letterSpacing = 0.8.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+            }
+            if (habit.isFocusEnabled) {
+                Spacer(Modifier.width(8.dp))
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(AscendColors.AccentBlue.copy(alpha = 0.14f))
+                        .clickable(onClick = onFocus)
+                        .padding(horizontal = 9.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Default.PlayArrow,
+                        contentDescription = "Start focus session",
+                        tint = AscendColors.AccentBlue,
+                        modifier = Modifier.size(12.dp),
+                    )
+                    Spacer(Modifier.width(2.dp))
+                    Text(
+                        "${habit.targetDurationMinutes ?: 20}m",
+                        color = AscendColors.AccentBlue,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
             }
         }
     }
