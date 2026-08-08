@@ -1,0 +1,886 @@
+==============================================================================
+  ASCEND — PERSISTENCE — ROOM ENTITIES, DAOS, DATABASE AND MIGRATIONS
+  4 files
+==============================================================================
+
+17 tables. Schema version 5 with four hand-written migrations
+(v1->v2->v3->v4->v5); none is destructive and none has ever been executed
+against a populated database. Migration correctness is priority 2 in the
+review brief.
+
+HunterProfileEntity is a singleton row (id = 0). Dates are stored as ISO-8601
+strings, timestamps as epoch millis.
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/data/db/AscendDatabase.kt
+  LINES: 227
+==============================================================================
+
+package com.ascend.app.data.db
+
+import android.content.Context
+import androidx.room.Database
+import androidx.room.Room
+import androidx.room.RoomDatabase
+import androidx.room.TypeConverters
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
+
+@Database(
+    entities = [
+        HabitEntity::class,
+        DailyLogEntity::class,
+        StatProgressEntity::class,
+        HunterProfileEntity::class,
+        LieTruthEntity::class,
+        WeeklyReviewEntity::class,
+        FocusSessionEntity::class,
+        EvidenceLogEntryEntity::class,
+        RewardEntity::class,
+        RewardPurchaseEntity::class,
+        UnlockedAchievementEntity::class,
+        DailyQuestEntity::class,
+        ShadowEntity::class,
+        GateRunEntity::class,
+        AiSettingsEntity::class,
+        CoachAdviceEntity::class,
+        ChatMessageEntity::class,
+    ],
+    version = 5,
+    exportSchema = false,
+)
+@TypeConverters(Converters::class)
+abstract class AscendDatabase : RoomDatabase() {
+    abstract fun habitDao(): HabitDao
+    abstract fun dailyLogDao(): DailyLogDao
+    abstract fun statProgressDao(): StatProgressDao
+    abstract fun hunterProfileDao(): HunterProfileDao
+    abstract fun lieTruthDao(): LieTruthDao
+    abstract fun weeklyReviewDao(): WeeklyReviewDao
+    abstract fun focusSessionDao(): FocusSessionDao
+    abstract fun evidenceLogDao(): EvidenceLogDao
+    abstract fun rewardDao(): RewardDao
+    abstract fun rewardPurchaseDao(): RewardPurchaseDao
+    abstract fun unlockedAchievementDao(): UnlockedAchievementDao
+    abstract fun dailyQuestDao(): DailyQuestDao
+    abstract fun shadowDao(): ShadowDao
+    abstract fun gateRunDao(): GateRunDao
+    abstract fun aiSettingsDao(): AiSettingsDao
+    abstract fun coachAdviceDao(): CoachAdviceDao
+    abstract fun chatMessageDao(): ChatMessageDao
+
+    companion object {
+        /**
+         * v2 adds the economy layer: Gold, titles, classes, rewards,
+         * achievements and daily quests. Written as a real migration rather
+         * than a destructive fallback so nobody loses their streaks.
+         */
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN gold INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN goldEarnedTotal INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN equippedTitleId TEXT")
+                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN hunterClass TEXT NOT NULL DEFAULT 'NONE'")
+                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN perfectDays INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN perfectWeeks INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN lastPerfectDate TEXT")
+                db.execSQL("ALTER TABLE daily_logs ADD COLUMN goldAwarded INTEGER NOT NULL DEFAULT 0")
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS rewards (
+                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        goldCost INTEGER NOT NULL,
+                        timesPurchased INTEGER NOT NULL DEFAULT 0,
+                        createdAt INTEGER NOT NULL,
+                        archived INTEGER NOT NULL DEFAULT 0
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS reward_purchases (
+                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        rewardId INTEGER NOT NULL,
+                        rewardName TEXT NOT NULL,
+                        goldSpent INTEGER NOT NULL,
+                        purchasedAtEpochMillis INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS unlocked_achievements (
+                        achievementId TEXT NOT NULL PRIMARY KEY,
+                        unlockedAtEpochMillis INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS daily_quests (
+                        date TEXT NOT NULL PRIMARY KEY,
+                        kind TEXT NOT NULL,
+                        description TEXT NOT NULL,
+                        targetCount INTEGER NOT NULL,
+                        targetHabitId INTEGER,
+                        xpReward INTEGER NOT NULL,
+                        goldReward INTEGER NOT NULL,
+                        claimed INTEGER NOT NULL DEFAULT 0
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
+        /**
+         * v3 adds the choice layer: manually allocated stat points, unlocked
+         * skills, extracted Shadows and Gate runs. Written as a real migration
+         * so nobody loses streaks, gold or achievements.
+         */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN allocatedPoints TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN unlockedSkills TEXT NOT NULL DEFAULT ''")
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS shadows (
+                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        habitId INTEGER NOT NULL,
+                        stat TEXT NOT NULL,
+                        extractedAtEpochMillis INTEGER NOT NULL,
+                        rank INTEGER NOT NULL DEFAULT 1
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS gate_runs (
+                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        rank TEXT NOT NULL,
+                        startDate TEXT NOT NULL,
+                        daysCleared INTEGER NOT NULL DEFAULT 0,
+                        status TEXT NOT NULL DEFAULT 'ACTIVE',
+                        stakePaid INTEGER NOT NULL,
+                        lastEvaluatedDate TEXT
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
+        /**
+         * v4 adds the AI coach: provider settings, the optional athlete profile,
+         * and cached advice so past answers stay readable offline.
+         */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS ai_settings (
+                        id INTEGER NOT NULL PRIMARY KEY,
+                        provider TEXT NOT NULL DEFAULT 'OPENROUTER',
+                        apiKey TEXT NOT NULL DEFAULT '',
+                        model TEXT NOT NULL DEFAULT '',
+                        age INTEGER,
+                        sex TEXT,
+                        heightCm INTEGER,
+                        weightKg INTEGER,
+                        goal TEXT,
+                        experience TEXT,
+                        equipment TEXT,
+                        dietaryNotes TEXT,
+                        injuries TEXT
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS coach_advice (
+                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        adviceType TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        model TEXT NOT NULL,
+                        createdAtEpochMillis INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
+        /** v5 adds the System chat transcript. */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE ai_settings ADD COLUMN systemVoice INTEGER NOT NULL DEFAULT 1")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS chat_messages (
+                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        role TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        createdAtEpochMillis INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
+        @Volatile private var instance: AscendDatabase? = null
+
+        fun getInstance(context: Context): AscendDatabase =
+            instance ?: synchronized(this) {
+                instance ?: Room.databaseBuilder(
+                    context.applicationContext,
+                    AscendDatabase::class.java,
+                    "ascend.db",
+                )
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .build()
+                    .also { instance = it }
+            }
+    }
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/data/db/Converters.kt
+  LINES: 85
+==============================================================================
+
+package com.ascend.app.data.db
+
+import androidx.room.TypeConverter
+import com.ascend.app.domain.DailyQuestKind
+import com.ascend.app.domain.DifficultyRating
+import com.ascend.app.domain.EvidenceType
+import com.ascend.app.domain.GateRank
+import com.ascend.app.domain.GateStatus
+import com.ascend.app.domain.HunterClass
+import com.ascend.app.domain.Skill
+import com.ascend.app.domain.Stat
+
+class Converters {
+    @TypeConverter
+    fun hunterClassToString(value: HunterClass): String = value.name
+
+    @TypeConverter
+    fun stringToHunterClass(value: String): HunterClass =
+        runCatching { HunterClass.valueOf(value) }.getOrDefault(HunterClass.NONE)
+
+    @TypeConverter
+    fun gateRankToString(value: GateRank): String = value.name
+
+    @TypeConverter
+    fun stringToGateRank(value: String): GateRank = GateRank.valueOf(value)
+
+    @TypeConverter
+    fun gateStatusToString(value: GateStatus): String = value.name
+
+    @TypeConverter
+    fun stringToGateStatus(value: String): GateStatus = GateStatus.valueOf(value)
+
+    /** Skills stored as "IRON_BODY,COIN_PURSE". Unknown names are dropped rather
+     * than thrown on, so removing a skill in a future version can't brick a save. */
+    @TypeConverter
+    fun skillsToString(value: Set<Skill>): String = value.joinToString(",") { it.name }
+
+    @TypeConverter
+    fun stringToSkills(value: String): Set<Skill> {
+        if (value.isBlank()) return emptySet()
+        return value.split(",").mapNotNull { runCatching { Skill.valueOf(it) }.getOrNull() }.toSet()
+    }
+
+    @TypeConverter
+    fun questKindToString(value: DailyQuestKind): String = value.name
+
+    @TypeConverter
+    fun stringToQuestKind(value: String): DailyQuestKind = DailyQuestKind.valueOf(value)
+
+    @TypeConverter
+    fun statToString(stat: Stat): String = stat.name
+
+    @TypeConverter
+    fun stringToStat(value: String): Stat = Stat.valueOf(value)
+
+    @TypeConverter
+    fun difficultyToString(value: DifficultyRating?): String? = value?.name
+
+    @TypeConverter
+    fun stringToDifficulty(value: String?): DifficultyRating? = value?.let { DifficultyRating.valueOf(it) }
+
+    @TypeConverter
+    fun evidenceTypeToString(value: EvidenceType): String = value.name
+
+    @TypeConverter
+    fun stringToEvidenceType(value: String): EvidenceType = EvidenceType.valueOf(value)
+
+    /** Map<Stat, Int> stored as "STR:120,VIT:80" — avoids pulling in a JSON dependency
+     * for one small, fully-controlled shape. */
+    @TypeConverter
+    fun statXpMapToString(value: Map<Stat, Int>): String =
+        value.entries.joinToString(",") { "${it.key.name}:${it.value}" }
+
+    @TypeConverter
+    fun stringToStatXpMap(value: String): Map<Stat, Int> {
+        if (value.isBlank()) return emptyMap()
+        return value.split(",").mapNotNull { entry ->
+            val parts = entry.split(":")
+            if (parts.size != 2) return@mapNotNull null
+            val stat = runCatching { Stat.valueOf(parts[0]) }.getOrNull() ?: return@mapNotNull null
+            val xp = parts[1].toIntOrNull() ?: return@mapNotNull null
+            stat to xp
+        }.toMap()
+    }
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/data/db/Daos.kt
+  LINES: 299
+==============================================================================
+
+package com.ascend.app.data.db
+
+import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import androidx.room.Update
+import com.ascend.app.domain.Stat
+import kotlinx.coroutines.flow.Flow
+
+@Dao
+interface HabitDao {
+    @Query("SELECT * FROM habits WHERE archived = 0 ORDER BY createdAt ASC")
+    fun observeActiveHabits(): Flow<List<HabitEntity>>
+
+    @Query("SELECT * FROM habits WHERE archived = 0 ORDER BY createdAt ASC")
+    suspend fun getActiveHabits(): List<HabitEntity>
+
+    @Query("SELECT * FROM habits WHERE id = :id")
+    suspend fun getById(id: Long): HabitEntity?
+
+    @Query("SELECT * FROM habits WHERE id = :id")
+    fun observeById(id: Long): Flow<HabitEntity?>
+
+    @Insert
+    suspend fun insert(habit: HabitEntity): Long
+
+    @Update
+    suspend fun update(habit: HabitEntity)
+}
+
+@Dao
+interface DailyLogDao {
+    @Query("SELECT * FROM daily_logs WHERE habitId = :habitId AND date = :date LIMIT 1")
+    suspend fun getForHabitAndDate(habitId: Long, date: String): DailyLogEntity?
+
+    @Query("SELECT * FROM daily_logs WHERE date = :date")
+    fun observeForDate(date: String): Flow<List<DailyLogEntity>>
+
+    @Query("SELECT * FROM daily_logs WHERE habitId = :habitId ORDER BY date DESC")
+    fun observeForHabit(habitId: Long): Flow<List<DailyLogEntity>>
+
+    @Query("SELECT * FROM daily_logs WHERE date BETWEEN :start AND :end")
+    suspend fun getForRange(start: String, end: String): List<DailyLogEntity>
+
+    @Query(
+        "SELECT COUNT(*) FROM daily_logs WHERE habitId = :habitId AND completed = 0 " +
+            "AND date BETWEEN :start AND :end",
+    )
+    suspend fun countMissesInRange(habitId: Long, start: String, end: String): Int
+
+    @Query(
+        "SELECT COUNT(*) FROM daily_logs dl JOIN habits h ON dl.habitId = h.id " +
+            "WHERE h.isNonNegotiable = 1 AND dl.completed = 0 AND dl.date BETWEEN :start AND :end",
+    )
+    suspend fun countNonNegotiableMissesInRange(start: String, end: String): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(log: DailyLogEntity): Long
+
+    @Query("SELECT COUNT(*) FROM daily_logs WHERE completed = 1")
+    suspend fun totalCompletions(): Int
+
+    @Query("SELECT COALESCE(MAX(streakAtCompletion), 0) FROM daily_logs WHERE completed = 1")
+    suspend fun longestStreak(): Int
+
+    @Query("SELECT COALESCE(MAX(streakAtCompletion), 0) FROM daily_logs WHERE habitId = :habitId AND completed = 1")
+    suspend fun longestStreakForHabit(habitId: Long): Int
+
+    @Query("SELECT COUNT(*) FROM daily_logs WHERE completed = 1 AND isPenaltyQuest = 1")
+    suspend fun penaltyQuestsRedeemed(): Int
+
+    @Query("SELECT habitId FROM daily_logs WHERE date = :date AND completed = 1")
+    suspend fun completedHabitIdsOn(date: String): List<Long>
+}
+
+@Dao
+interface StatProgressDao {
+    @Query("SELECT * FROM stat_progress")
+    fun observeAll(): Flow<List<StatProgressEntity>>
+
+    @Query("SELECT * FROM stat_progress")
+    suspend fun getAll(): List<StatProgressEntity>
+
+    @Query("SELECT * FROM stat_progress WHERE stat = :stat")
+    suspend fun get(stat: Stat): StatProgressEntity?
+
+    @Query("SELECT COALESCE(SUM(xp), 0) FROM stat_progress")
+    fun observeTotalXp(): Flow<Int>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(entity: StatProgressEntity)
+}
+
+@Dao
+interface HunterProfileDao {
+    @Query("SELECT * FROM hunter_profile WHERE id = ${HunterProfileEntity.SINGLETON_ID}")
+    fun observe(): Flow<HunterProfileEntity?>
+
+    @Query("SELECT * FROM hunter_profile WHERE id = ${HunterProfileEntity.SINGLETON_ID}")
+    suspend fun get(): HunterProfileEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(entity: HunterProfileEntity)
+}
+
+@Dao
+interface LieTruthDao {
+    @Query("SELECT * FROM lies_truths ORDER BY createdAt DESC")
+    fun observeAll(): Flow<List<LieTruthEntity>>
+
+    @Query("SELECT * FROM lies_truths WHERE active = 1 ORDER BY RANDOM() LIMIT 1")
+    suspend fun randomActive(): LieTruthEntity?
+
+    @Insert
+    suspend fun insert(entity: LieTruthEntity): Long
+
+    @Update
+    suspend fun update(entity: LieTruthEntity)
+}
+
+@Dao
+interface WeeklyReviewDao {
+    @Query("SELECT * FROM weekly_reviews ORDER BY weekStart DESC")
+    fun observeAll(): Flow<List<WeeklyReviewEntity>>
+
+    @Query("SELECT * FROM weekly_reviews WHERE weekStart = :weekStart LIMIT 1")
+    suspend fun get(weekStart: String): WeeklyReviewEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(entity: WeeklyReviewEntity)
+}
+
+@Dao
+interface FocusSessionDao {
+    @Query("SELECT * FROM focus_sessions WHERE habitId = :habitId ORDER BY startTimeEpochMillis DESC LIMIT 3")
+    suspend fun lastThreeForHabit(habitId: Long): List<FocusSessionEntity>
+
+    @Query("SELECT * FROM focus_sessions ORDER BY startTimeEpochMillis DESC")
+    fun observeAll(): Flow<List<FocusSessionEntity>>
+
+    @Query("SELECT COUNT(*) FROM focus_sessions WHERE completed = 1")
+    suspend fun completedCount(): Int
+
+    @Query("SELECT COALESCE(SUM(actualDurationSeconds), 0) / 60 FROM focus_sessions WHERE completed = 1")
+    suspend fun completedMinutesTotal(): Int
+
+    @Query(
+        "SELECT COUNT(*) FROM focus_sessions WHERE completed = 1 " +
+            "AND startTimeEpochMillis BETWEEN :start AND :end",
+    )
+    suspend fun completedCountBetween(start: Long, end: Long): Int
+
+    @Insert
+    suspend fun insert(entity: FocusSessionEntity): Long
+
+    @Update
+    suspend fun update(entity: FocusSessionEntity)
+}
+
+@Dao
+interface RewardDao {
+    @Query("SELECT * FROM rewards WHERE archived = 0 ORDER BY goldCost ASC")
+    fun observeActive(): Flow<List<RewardEntity>>
+
+    @Query("SELECT * FROM rewards WHERE id = :id")
+    suspend fun getById(id: Long): RewardEntity?
+
+    @Insert
+    suspend fun insert(entity: RewardEntity): Long
+
+    @Update
+    suspend fun update(entity: RewardEntity)
+}
+
+@Dao
+interface RewardPurchaseDao {
+    @Query("SELECT * FROM reward_purchases ORDER BY purchasedAtEpochMillis DESC")
+    fun observeAll(): Flow<List<RewardPurchaseEntity>>
+
+    @Insert
+    suspend fun insert(entity: RewardPurchaseEntity): Long
+}
+
+@Dao
+interface UnlockedAchievementDao {
+    @Query("SELECT * FROM unlocked_achievements ORDER BY unlockedAtEpochMillis DESC")
+    fun observeAll(): Flow<List<UnlockedAchievementEntity>>
+
+    @Query("SELECT achievementId FROM unlocked_achievements")
+    suspend fun unlockedIds(): List<String>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(entity: UnlockedAchievementEntity)
+}
+
+@Dao
+interface DailyQuestDao {
+    @Query("SELECT * FROM daily_quests WHERE date = :date LIMIT 1")
+    fun observeForDate(date: String): Flow<DailyQuestEntity?>
+
+    @Query("SELECT * FROM daily_quests WHERE date = :date LIMIT 1")
+    suspend fun getForDate(date: String): DailyQuestEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(entity: DailyQuestEntity)
+}
+
+@Dao
+interface EvidenceLogDao {
+    @Query("SELECT * FROM evidence_log ORDER BY dateEpochMillis DESC")
+    fun observeAll(): Flow<List<EvidenceLogEntryEntity>>
+
+    @Query("SELECT * FROM evidence_log WHERE dateEpochMillis BETWEEN :start AND :end ORDER BY dateEpochMillis DESC")
+    suspend fun getForRange(start: Long, end: Long): List<EvidenceLogEntryEntity>
+
+    @Insert
+    suspend fun insert(entity: EvidenceLogEntryEntity): Long
+}
+
+@Dao
+interface ShadowDao {
+    @Query("SELECT * FROM shadows ORDER BY rank DESC, extractedAtEpochMillis DESC")
+    fun observeAll(): Flow<List<ShadowEntity>>
+
+    @Query("SELECT * FROM shadows")
+    suspend fun getAll(): List<ShadowEntity>
+
+    @Query("SELECT * FROM shadows WHERE habitId = :habitId LIMIT 1")
+    suspend fun forHabit(habitId: Long): ShadowEntity?
+
+    @Insert
+    suspend fun insert(entity: ShadowEntity): Long
+
+    @Update
+    suspend fun update(entity: ShadowEntity)
+}
+
+@Dao
+interface GateRunDao {
+    @Query("SELECT * FROM gate_runs WHERE status = 'ACTIVE' LIMIT 1")
+    fun observeActive(): Flow<GateRunEntity?>
+
+    @Query("SELECT * FROM gate_runs WHERE status = 'ACTIVE' LIMIT 1")
+    suspend fun getActive(): GateRunEntity?
+
+    @Query("SELECT * FROM gate_runs ORDER BY id DESC LIMIT 20")
+    fun observeHistory(): Flow<List<GateRunEntity>>
+
+    @Insert
+    suspend fun insert(entity: GateRunEntity): Long
+
+    @Update
+    suspend fun update(entity: GateRunEntity)
+}
+
+@Dao
+interface AiSettingsDao {
+    @Query("SELECT * FROM ai_settings WHERE id = ${AiSettingsEntity.SINGLETON_ID}")
+    fun observe(): Flow<AiSettingsEntity?>
+
+    @Query("SELECT * FROM ai_settings WHERE id = ${AiSettingsEntity.SINGLETON_ID}")
+    suspend fun get(): AiSettingsEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(entity: AiSettingsEntity)
+}
+
+@Dao
+interface CoachAdviceDao {
+    @Query("SELECT * FROM coach_advice ORDER BY createdAtEpochMillis DESC")
+    fun observeAll(): Flow<List<CoachAdviceEntity>>
+
+    @Query("SELECT * FROM coach_advice WHERE adviceType = :type ORDER BY createdAtEpochMillis DESC LIMIT 1")
+    suspend fun latestFor(type: String): CoachAdviceEntity?
+
+    @Insert
+    suspend fun insert(entity: CoachAdviceEntity): Long
+
+    @Query("DELETE FROM coach_advice WHERE id = :id")
+    suspend fun delete(id: Long)
+}
+
+@Dao
+interface ChatMessageDao {
+    @Query("SELECT * FROM chat_messages ORDER BY createdAtEpochMillis ASC")
+    fun observeAll(): Flow<List<ChatMessageEntity>>
+
+    /** Oldest-first, capped — long histories would blow past context limits
+     * and cost more on metered keys. */
+    @Query("SELECT * FROM chat_messages ORDER BY createdAtEpochMillis DESC LIMIT :limit")
+    suspend fun recent(limit: Int): List<ChatMessageEntity>
+
+    @Insert
+    suspend fun insert(entity: ChatMessageEntity): Long
+
+    @Query("DELETE FROM chat_messages")
+    suspend fun clear()
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/data/db/Entities.kt
+  LINES: 230
+==============================================================================
+
+package com.ascend.app.data.db
+
+import androidx.room.Entity
+import androidx.room.Index
+import androidx.room.PrimaryKey
+import com.ascend.app.domain.DailyQuestKind
+import com.ascend.app.domain.DifficultyRating
+import com.ascend.app.domain.EvidenceType
+import com.ascend.app.domain.GateRank
+import com.ascend.app.domain.GateStatus
+import com.ascend.app.domain.HunterClass
+import com.ascend.app.domain.Skill
+import com.ascend.app.domain.Stat
+
+@Entity(tableName = "habits")
+data class HabitEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val stat: Stat,
+    val isNonNegotiable: Boolean,
+    val reminderHour: Int? = null,
+    val reminderMinute: Int? = null,
+    val isFocusEnabled: Boolean = false,
+    val targetDurationMinutes: Int? = null,
+    val createdAt: Long,
+    val archived: Boolean = false,
+)
+
+@Entity(
+    tableName = "daily_logs",
+    indices = [Index(value = ["habitId", "date"], unique = true)],
+)
+data class DailyLogEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val habitId: Long,
+    /** ISO date string, e.g. "2026-08-06" — one row per (habit, date). */
+    val date: String,
+    val completed: Boolean,
+    val xpAwarded: Int = 0,
+    val goldAwarded: Int = 0,
+    val isPenaltyQuest: Boolean = false,
+    val streakAtCompletion: Int = 0,
+)
+
+@Entity(tableName = "stat_progress")
+data class StatProgressEntity(
+    @PrimaryKey val stat: Stat,
+    val xp: Int = 0,
+)
+
+@Entity(tableName = "hunter_profile")
+data class HunterProfileEntity(
+    @PrimaryKey val id: Int = SINGLETON_ID,
+    val hunterName: String = "Hunter",
+    val morningReminderHour: Int = 7,
+    val morningReminderMinute: Int = 0,
+    val eveningReminderHour: Int = 20,
+    val eveningReminderMinute: Int = 0,
+    val notificationsEnabled: Boolean = true,
+    val onboardingComplete: Boolean = false,
+    val gold: Int = 0,
+    val goldEarnedTotal: Int = 0,
+    val equippedTitleId: String? = null,
+    val hunterClass: HunterClass = HunterClass.NONE,
+    val perfectDays: Int = 0,
+    val perfectWeeks: Int = 0,
+    /** ISO date of the most recent fully-cleared day; stops the counter being
+     * farmed by unchecking and rechecking a habit. */
+    val lastPerfectDate: String? = null,
+    /** Manually spent stat points, on top of levels earned from XP. */
+    val allocatedPoints: Map<Stat, Int> = emptyMap(),
+    val unlockedSkills: Set<Skill> = emptySet(),
+) {
+    companion object {
+        const val SINGLETON_ID = 0
+    }
+}
+
+@Entity(tableName = "rewards")
+data class RewardEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val goldCost: Int,
+    val timesPurchased: Int = 0,
+    val createdAt: Long,
+    val archived: Boolean = false,
+)
+
+@Entity(tableName = "reward_purchases")
+data class RewardPurchaseEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val rewardId: Long,
+    val rewardName: String,
+    val goldSpent: Int,
+    val purchasedAtEpochMillis: Long,
+)
+
+@Entity(tableName = "unlocked_achievements")
+data class UnlockedAchievementEntity(
+    @PrimaryKey val achievementId: String,
+    val unlockedAtEpochMillis: Long,
+)
+
+@Entity(tableName = "daily_quests")
+data class DailyQuestEntity(
+    @PrimaryKey val date: String,
+    val kind: DailyQuestKind,
+    val description: String,
+    val targetCount: Int,
+    val targetHabitId: Long? = null,
+    val xpReward: Int,
+    val goldReward: Int,
+    val claimed: Boolean = false,
+)
+
+@Entity(tableName = "lies_truths")
+data class LieTruthEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val lieText: String,
+    val truthText: String,
+    val active: Boolean = true,
+    val createdAt: Long,
+)
+
+@Entity(tableName = "weekly_reviews")
+data class WeeklyReviewEntity(
+    @PrimaryKey val weekStart: String, // ISO date of the Monday starting the week
+    val weekEnd: String,
+    val completionPercent: Float,
+    val xpByStat: Map<Stat, Int>,
+    val bestDay: String? = null,
+    val worstDay: String? = null,
+    val userReflectionNote: String = "",
+)
+
+@Entity(tableName = "focus_sessions")
+data class FocusSessionEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val habitId: Long,
+    val startTimeEpochMillis: Long,
+    val plannedDurationMinutes: Int,
+    val actualDurationSeconds: Int,
+    val completed: Boolean,
+    val difficultyRating: DifficultyRating? = null,
+)
+
+@Entity(tableName = "evidence_log")
+data class EvidenceLogEntryEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val type: EvidenceType,
+    val description: String,
+    val dateEpochMillis: Long,
+    val sourceId: Long? = null,
+)
+
+@Entity(tableName = "shadows")
+data class ShadowEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val habitId: Long,
+    val stat: Stat,
+    val extractedAtEpochMillis: Long,
+    /** Rises each time the same habit is missed and redeemed again. */
+    val rank: Int = 1,
+)
+
+@Entity(tableName = "gate_runs")
+data class GateRunEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val rank: GateRank,
+    /** ISO date the run was entered. */
+    val startDate: String,
+    val daysCleared: Int = 0,
+    val status: GateStatus = GateStatus.ACTIVE,
+    val stakePaid: Int,
+    /** ISO date of the last day already counted, so a run advances once per day. */
+    val lastEvaluatedDate: String? = null,
+)
+
+/**
+ * AI coach configuration and the optional body profile that makes training and
+ * nutrition advice specific. Single row, like the hunter profile.
+ *
+ * The API key lives in app-private storage. That is sandboxed from other apps
+ * on a non-rooted device, but it is not encrypted at rest — worth knowing
+ * before pasting in a key that bills you.
+ */
+@Entity(tableName = "ai_settings")
+data class AiSettingsEntity(
+    @PrimaryKey val id: Int = SINGLETON_ID,
+    val provider: String = "OPENROUTER",
+    val apiKey: String = "",
+    val model: String = "",
+    // Optional athlete profile — all nullable, advice degrades gracefully.
+    val age: Int? = null,
+    val sex: String? = null,
+    val heightCm: Int? = null,
+    val weightKg: Int? = null,
+    val goal: String? = null,
+    val experience: String? = null,
+    val equipment: String? = null,
+    val dietaryNotes: String? = null,
+    val injuries: String? = null,
+    /** In-character System voice vs plain coaching prose. */
+    val systemVoice: Boolean = true,
+) {
+    companion object {
+        const val SINGLETON_ID = 0
+    }
+}
+
+/** Advice is cached so it stays readable with no connection. */
+@Entity(tableName = "coach_advice")
+data class CoachAdviceEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val adviceType: String,
+    val content: String,
+    val model: String,
+    val createdAtEpochMillis: Long,
+)
+
+/** One turn of the System chat. Kept so a conversation survives app restarts. */
+@Entity(tableName = "chat_messages")
+data class ChatMessageEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** "user" or "assistant", matching the wire format. */
+    val role: String,
+    val content: String,
+    val createdAtEpochMillis: Long,
+)
+
+
+==============================================================================
+  END OF 03-DATABASE-LAYER.txt
+==============================================================================

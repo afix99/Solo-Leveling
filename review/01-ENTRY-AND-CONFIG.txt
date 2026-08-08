@@ -1,0 +1,525 @@
+==============================================================================
+  ASCEND — APP ENTRY POINT, BUILD CONFIGURATION AND RESOURCES
+  18 files
+==============================================================================
+
+Where the app starts and how it is assembled. AscendApplication builds the
+Room database and repository once and hands the same instances to every
+screen and worker — this is the whole of the dependency injection story, on
+purpose (no Hilt/Koin). MainActivity hosts a single Compose tree; there is
+one other Activity in the app, for focus sessions.
+
+The Gradle files show the full dependency list. Note what is absent: no
+networking library, no JSON library, no DI, no image loading.
+
+
+==============================================================================
+  FILE:  app/src/main/AndroidManifest.xml
+  LINES: 49
+==============================================================================
+
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Used only by the optional AI Coach, and only to the provider the user
+         configures. Every other feature works with no connection. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
+    <application
+        android:name=".AscendApplication"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Ascend"
+        android:networkSecurityConfig="@xml/network_security_config">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Ascend"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".focus.FocusSessionActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Ascend" />
+
+        <receiver
+            android:name=".notifications.BootRescheduleReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+    </application>
+
+</manifest>
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/AscendApplication.kt
+  LINES: 27
+==============================================================================
+
+package com.ascend.app
+
+import android.app.Application
+import com.ascend.app.data.db.AscendDatabase
+import com.ascend.app.data.repo.AscendRepository
+import com.ascend.app.notifications.NotificationScheduler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+
+class AscendApplication : Application() {
+
+    lateinit var repository: AscendRepository
+        private set
+
+    /** For one-off startup work that must outlive any single screen. */
+    val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    override fun onCreate() {
+        super.onCreate()
+        val db = AscendDatabase.getInstance(this)
+        repository = AscendRepository(db)
+        applicationScope.launch { repository.ensureProfileExists() }
+        NotificationScheduler.scheduleAll(this)
+    }
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/MainActivity.kt
+  LINES: 21
+==============================================================================
+
+package com.ascend.app
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import com.ascend.app.ui.AscendApp
+import com.ascend.app.ui.theme.AscendTheme
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        val repository = (application as AscendApplication).repository
+        setContent {
+            AscendTheme {
+                AscendApp(repository = repository)
+            }
+        }
+    }
+}
+
+
+==============================================================================
+  FILE:  build.gradle.kts
+  LINES: 11
+==============================================================================
+
+// Top-level build file
+plugins {
+    id("com.android.application") version "8.7.0" apply false
+    id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+    id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
+    id("com.google.devtools.ksp") version "2.0.21-1.0.28" apply false
+}
+
+tasks.register("clean", Delete::class) {
+    delete(rootProject.layout.buildDirectory)
+}
+
+
+==============================================================================
+  FILE:  settings.gradle.kts
+  LINES: 18
+==============================================================================
+
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "ASCEND"
+include(":app")
+
+
+==============================================================================
+  FILE:  gradle.properties
+  LINES: 6
+==============================================================================
+
+org.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8
+org.gradle.parallel=true
+org.gradle.caching=true
+android.useAndroidX=true
+android.nonTransitiveRClass=true
+kotlin.code.style=official
+
+
+==============================================================================
+  FILE:  app/build.gradle.kts
+  LINES: 91
+==============================================================================
+
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
+    id("com.google.devtools.ksp")
+}
+
+android {
+    namespace = "com.ascend.app"
+    compileSdk = 34
+
+    defaultConfig {
+        applicationId = "com.ascend.app"
+        minSdk = 26
+        targetSdk = 34
+        versionCode = 13
+        versionName = "5.0"
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        vectorDrawables.useSupportLibrary = true
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    buildFeatures {
+        compose = true
+    }
+
+    packaging {
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+}
+
+dependencies {
+    val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
+    implementation(composeBom)
+    androidTestImplementation(composeBom)
+
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.6")
+    implementation("androidx.activity:activity-compose:1.9.2")
+
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-graphics")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
+    implementation("androidx.compose.animation:animation")
+
+    implementation("androidx.navigation:navigation-compose:2.8.2")
+
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    ksp("androidx.room:room-compiler:2.6.1")
+
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
+
+    testImplementation("junit:junit:4.13.2")
+    // Android stubs org.json in unit tests, so every JSON class silently returns
+    // defaults and parsing code appears to work while doing nothing. This pulls
+    // in the real implementation so the parsers are genuinely exercised.
+    testImplementation("org.json:json:20240303")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-tooling")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
+}
+
+
+==============================================================================
+  FILE:  app/proguard-rules.pro
+  LINES: 2
+==============================================================================
+
+# Add project specific ProGuard rules here.
+-keep class com.ascend.app.data.** { *; }
+
+
+==============================================================================
+  FILE:  app/src/main/res/drawable/ic_launcher_background.xml
+  LINES: 46
+==============================================================================
+
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adaptive icon background: a radial field so the mark reads as lit from within
+  rather than sitting on flat black, a tighter glow directly behind the chevrons
+  for depth, and two faint diagonal streaks for "System interface" texture.
+  Corners stay near-black since launchers mask them at varying radii.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:centerX="54" android:centerY="44" android:gradientRadius="66"
+                android:type="radial">
+                <item android:offset="0.0" android:color="#FF1B2647" />
+                <item android:offset="0.45" android:color="#FF111633" />
+                <item android:offset="1.0" android:color="#FF06070C" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <path
+        android:pathData="M-10,84 L44,20 L52,20 L-2,84 Z"
+        android:fillColor="#FF4C8DFF"
+        android:fillAlpha="0.05" />
+    <path
+        android:pathData="M64,20 L70,20 L16,84 L10,84 Z"
+        android:fillColor="#FF8B5CF6"
+        android:fillAlpha="0.05" />
+
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:centerX="54" android:centerY="52" android:gradientRadius="30"
+                android:type="radial">
+                <item android:offset="0.0" android:color="#4D4C8DFF" />
+                <item android:offset="1.0" android:color="#004C8DFF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>
+
+
+==============================================================================
+  FILE:  app/src/main/res/drawable/ic_launcher_foreground.xml
+  LINES: 45
+==============================================================================
+
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Ascend mark: a bold chevron pair rising, in the app's blue -> violet accent
+  pair. Deliberately frameless — an earlier version wrapped this in the System
+  window's cut-corner frame, which read fine at full size but collapsed into
+  visual mush at launcher scale. One strong silhouette survives the shrink.
+
+  All geometry stays inside the adaptive-icon safe zone: a 72dp circle centred
+  in the 108dp viewport (max radius ~36 from 54,54), so no launcher mask clips it.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Leading chevron. -->
+    <path android:pathData="M54,30 L78,58 L66,58 L54,44 L42,58 L30,58 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="30" android:startY="30"
+                android:endX="78" android:endY="58"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FF6FA8FF" />
+                <item android:offset="1.0" android:color="#FF9B6BFF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Trailing chevron, dimmer, so the pair reads as upward motion. -->
+    <path
+        android:pathData="M54,60 L70,79 L61,79 L54,71 L47,79 L38,79 Z"
+        android:fillAlpha="0.72">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="38" android:startY="60"
+                android:endX="70" android:endY="79"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FF4C8DFF" />
+                <item android:offset="1.0" android:color="#FF8B5CF6" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>
+
+
+==============================================================================
+  FILE:  app/src/main/res/drawable/ic_launcher_monochrome.xml
+  LINES: 16
+==============================================================================
+
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Themed-icon layer (Android 13+). The launcher tints this, so it must be a
+     single-colour silhouette with no gradients. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M54,30 L78,58 L66,58 L54,44 L42,58 L30,58 Z"
+        android:fillColor="#FFFFFFFF" />
+    <path
+        android:pathData="M54,60 L70,79 L61,79 L54,71 L47,79 L38,79 Z"
+        android:fillColor="#FFFFFFFF"
+        android:fillAlpha="0.72" />
+</vector>
+
+
+==============================================================================
+  FILE:  app/src/main/res/drawable/ic_notification.xml
+  LINES: 14
+==============================================================================
+
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFFFF">
+    <path
+        android:pathData="M12,3 L20,13 L15.6,13 L12,8.6 L8.4,13 L4,13 Z"
+        android:fillColor="#FFFFFFFF" />
+    <path
+        android:pathData="M12,13.5 L18,21 L14.6,21 L12,17.8 L9.4,21 L6,21 Z"
+        android:fillColor="#FFFFFFFF" />
+</vector>
+
+
+==============================================================================
+  FILE:  app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+  LINES: 6
+==============================================================================
+
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
+</adaptive-icon>
+
+
+==============================================================================
+  FILE:  app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+  LINES: 6
+==============================================================================
+
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
+</adaptive-icon>
+
+
+==============================================================================
+  FILE:  app/src/main/res/values/colors.xml
+  LINES: 3
+==============================================================================
+
+<resources>
+    <color name="system_bg">#0A0B0F</color>
+</resources>
+
+
+==============================================================================
+  FILE:  app/src/main/res/values/strings.xml
+  LINES: 3
+==============================================================================
+
+<resources>
+    <string name="app_name">ASCEND</string>
+</resources>
+
+
+==============================================================================
+  FILE:  app/src/main/res/values/themes.xml
+  LINES: 11
+==============================================================================
+
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- App content is drawn entirely by Jetpack Compose; this is the pre-Compose
+         splash/window background only. -->
+    <style name="Theme.Ascend" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/system_bg</item>
+        <item name="android:statusBarColor">@color/system_bg</item>
+        <item name="android:navigationBarColor">@color/system_bg</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="23">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
+    </style>
+</resources>
+
+
+==============================================================================
+  FILE:  app/src/main/res/xml/network_security_config.xml
+  LINES: 6
+==============================================================================
+
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cleartext stays blocked outright. The only outbound traffic ASCEND makes is
+     the optional AI Coach calling the provider the user configured, over HTTPS. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>
+
+
+==============================================================================
+  END OF 01-ENTRY-AND-CONFIG.txt
+==============================================================================

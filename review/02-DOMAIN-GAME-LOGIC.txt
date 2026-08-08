@@ -1,0 +1,1347 @@
+==============================================================================
+  ASCEND — DOMAIN — ALL GAME RULES (PURE KOTLIN, NO ANDROID IMPORTS)
+  14 files
+==============================================================================
+
+This is where every balance decision lives. Nothing here imports Android,
+which is why all 129 unit tests target this package plus data/ai.
+
+Read HunterLoadout.kt first — it is the type that unifies the systems. Every
+payout in the app (XP earned, gold earned, penalty size, whether a streak
+survives a miss) resolves through it, so adding a new modifier means editing
+one file rather than threading a parameter through the repository.
+
+If you are evaluating game balance or looking for exploits, everything you
+need is in this bundle.
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/domain/Achievements.kt
+  LINES: 209
+==============================================================================
+
+package com.ascend.app.domain
+
+/** A snapshot of everything an achievement condition can look at. */
+data class HunterStats(
+    val totalCompletions: Int = 0,
+    val longestStreak: Int = 0,
+    val penaltyQuestsRedeemed: Int = 0,
+    val focusSessionsCompleted: Int = 0,
+    val focusMinutesTotal: Int = 0,
+    val hunterLevel: Int = 1,
+    val rank: Rank = Rank.E,
+    val perfectDays: Int = 0,
+    val perfectWeeks: Int = 0,
+    val goldEarnedTotal: Int = 0,
+    val maxStatLevel: Int = 1,
+)
+
+data class Achievement(
+    val id: String,
+    val name: String,
+    val description: String,
+    val goldReward: Int,
+    /** Title unlocked alongside it, if any. */
+    val titleId: String? = null,
+    val condition: (HunterStats) -> Boolean,
+)
+
+/** An equippable title, shown next to your name on Today. */
+data class Title(val id: String, val text: String, val description: String)
+
+object Achievements {
+
+    val titles = listOf(
+        Title("first_steps", "The Awakened", "Completed your first habit."),
+        Title("unbroken", "Unbroken", "Held a 30-day streak."),
+        Title("adversity", "The One Who Overcame Adversity", "Redeemed 10 penalty quests."),
+        Title("deep_diver", "Deep Diver", "Completed 50 focus sessions."),
+        Title("relentless", "Relentless", "100 perfect days."),
+        Title("monarch", "Shadow Monarch", "Reached S-Rank."),
+        Title("architect", "The Architect", "Took a stat to level 20."),
+        Title("iron_will", "Iron Will", "Held a 100-day streak."),
+    )
+
+    fun titleById(id: String?): Title? = titles.find { it.id == id }
+
+    val all: List<Achievement> = listOf(
+        Achievement(
+            id = "first_completion",
+            name = "First Step",
+            description = "Complete your first habit.",
+            goldReward = 25,
+            titleId = "first_steps",
+            condition = { it.totalCompletions >= 1 },
+        ),
+        Achievement(
+            id = "completions_50",
+            name = "Getting Somewhere",
+            description = "Complete 50 habits.",
+            goldReward = 75,
+            condition = { it.totalCompletions >= 50 },
+        ),
+        Achievement(
+            id = "completions_250",
+            name = "Habitual",
+            description = "Complete 250 habits.",
+            goldReward = 200,
+            condition = { it.totalCompletions >= 250 },
+        ),
+        Achievement(
+            id = "completions_1000",
+            name = "Unrecognizable",
+            description = "Complete 1000 habits.",
+            goldReward = 750,
+            condition = { it.totalCompletions >= 1000 },
+        ),
+        Achievement(
+            id = "streak_7",
+            name = "One Week",
+            description = "Hold a 7-day streak on any habit.",
+            goldReward = 50,
+            condition = { it.longestStreak >= 7 },
+        ),
+        Achievement(
+            id = "streak_30",
+            name = "Unbroken",
+            description = "Hold a 30-day streak on any habit.",
+            goldReward = 200,
+            titleId = "unbroken",
+            condition = { it.longestStreak >= 30 },
+        ),
+        Achievement(
+            id = "streak_100",
+            name = "Iron Will",
+            description = "Hold a 100-day streak on any habit.",
+            goldReward = 1000,
+            titleId = "iron_will",
+            condition = { it.longestStreak >= 100 },
+        ),
+        Achievement(
+            id = "redeem_1",
+            name = "Back On It",
+            description = "Redeem your first penalty quest.",
+            goldReward = 40,
+            condition = { it.penaltyQuestsRedeemed >= 1 },
+        ),
+        Achievement(
+            id = "redeem_10",
+            name = "The One Who Overcame Adversity",
+            description = "Redeem 10 penalty quests.",
+            goldReward = 250,
+            titleId = "adversity",
+            condition = { it.penaltyQuestsRedeemed >= 10 },
+        ),
+        Achievement(
+            id = "focus_10",
+            name = "In The Zone",
+            description = "Complete 10 focus sessions.",
+            goldReward = 75,
+            condition = { it.focusSessionsCompleted >= 10 },
+        ),
+        Achievement(
+            id = "focus_50",
+            name = "Deep Diver",
+            description = "Complete 50 focus sessions.",
+            goldReward = 300,
+            titleId = "deep_diver",
+            condition = { it.focusSessionsCompleted >= 50 },
+        ),
+        Achievement(
+            id = "focus_1000_min",
+            name = "A Thousand Minutes",
+            description = "Log 1000 minutes of focused work.",
+            goldReward = 400,
+            condition = { it.focusMinutesTotal >= 1000 },
+        ),
+        Achievement(
+            id = "perfect_day_1",
+            name = "Clean Sheet",
+            description = "Finish every non-negotiable in a single day.",
+            goldReward = 50,
+            condition = { it.perfectDays >= 1 },
+        ),
+        Achievement(
+            id = "perfect_days_30",
+            name = "Thirty Clean",
+            description = "30 perfect days.",
+            goldReward = 300,
+            condition = { it.perfectDays >= 30 },
+        ),
+        Achievement(
+            id = "perfect_days_100",
+            name = "Relentless",
+            description = "100 perfect days.",
+            goldReward = 1000,
+            titleId = "relentless",
+            condition = { it.perfectDays >= 100 },
+        ),
+        Achievement(
+            id = "perfect_week_1",
+            name = "A Full Week",
+            description = "A whole week without missing a non-negotiable.",
+            goldReward = 150,
+            condition = { it.perfectWeeks >= 1 },
+        ),
+        Achievement(
+            id = "rank_c",
+            name = "C-Rank Hunter",
+            description = "Reach C-Rank and unlock the Job Change.",
+            goldReward = 200,
+            condition = { it.rank.ordinal >= Rank.C.ordinal },
+        ),
+        Achievement(
+            id = "rank_a",
+            name = "A-Rank Hunter",
+            description = "Reach A-Rank.",
+            goldReward = 500,
+            condition = { it.rank.ordinal >= Rank.A.ordinal },
+        ),
+        Achievement(
+            id = "rank_s",
+            name = "Shadow Monarch",
+            description = "Reach S-Rank.",
+            goldReward = 2000,
+            titleId = "monarch",
+            condition = { it.rank.ordinal >= Rank.S.ordinal },
+        ),
+        Achievement(
+            id = "stat_20",
+            name = "The Architect",
+            description = "Take any single stat to level 20.",
+            goldReward = 500,
+            titleId = "architect",
+            condition = { it.maxStatLevel >= 20 },
+        ),
+        Achievement(
+            id = "gold_5000",
+            name = "War Chest",
+            description = "Earn 5000 Gold in total.",
+            goldReward = 250,
+            condition = { it.goldEarnedTotal >= 5000 },
+        ),
+    )
+
+    fun byId(id: String): Achievement? = all.find { it.id == id }
+
+    /** Achievements newly satisfied by [stats] that aren't in [alreadyUnlocked]. */
+    fun newlyUnlocked(stats: HunterStats, alreadyUnlocked: Set<String>): List<Achievement> =
+        all.filter { it.id !in alreadyUnlocked && it.condition(stats) }
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/domain/Coach.kt
+  LINES: 98
+==============================================================================
+
+package com.ascend.app.domain
+
+/**
+ * The kinds of advice the coach can produce. Each one is answered with the
+ * user's *real* logged data, not a generic template — that's the whole reason
+ * this lives inside the app rather than being a chatbot you paste into.
+ */
+enum class AdviceType(
+    val title: String,
+    val blurb: String,
+    val needsAthleteProfile: Boolean,
+) {
+    DATA_REVIEW(
+        title = "Review my data",
+        blurb = "Reads your completion rates, streaks and misses, then says what to change.",
+        needsAthleteProfile = false,
+    ),
+    TRAINING_PLAN(
+        title = "Training plan",
+        blurb = "A weekly lifting split for muscle growth, matched to your equipment and experience.",
+        needsAthleteProfile = true,
+    ),
+    NUTRITION(
+        title = "Eating schedule",
+        blurb = "Daily calorie and protein targets with a meal timing structure for muscle gain.",
+        needsAthleteProfile = true,
+    ),
+    READING(
+        title = "Reading technique",
+        blurb = "How to read faster and retain more, based on how much you actually read.",
+        needsAthleteProfile = false,
+    ),
+    DEEP_WORK(
+        title = "Deep work",
+        blurb = "Concrete ways to extend your focus sessions, using your real session history.",
+        needsAthleteProfile = false,
+    ),
+    HABIT_DESIGN(
+        title = "Redesign my habits",
+        blurb = "Which habits to keep, cut, or add — argued from your own numbers.",
+        needsAthleteProfile = false,
+    ),
+    SLEEP(
+        title = "Sleep & recovery",
+        blurb = "Recovery advice built around your wake/sleep habits and training load.",
+        needsAthleteProfile = true,
+    ),
+
+    // ---- Growth abilities ------------------------------------------------
+    APPRAISAL(
+        title = "Appraisal",
+        blurb = "Picks your weakest habit and dissects why it keeps failing.",
+        needsAthleteProfile = false,
+    ),
+    ASCENSION_PLAN(
+        title = "Ascension plan",
+        blurb = "A 90-day roadmap to your next Rank, with milestones you can check.",
+        needsAthleteProfile = false,
+    ),
+    GATE_DESIGN(
+        title = "Design a Gate",
+        blurb = "A custom challenge built around the thing you're worst at.",
+        needsAthleteProfile = false,
+    ),
+    DEBRIEF(
+        title = "Debrief a failure",
+        blurb = "Post-mortem on your broken streaks — what actually caused them.",
+        needsAthleteProfile = false,
+    ),
+    CLASS_ADVISOR(
+        title = "Job Change advice",
+        blurb = "Which class your data says you should take, and why.",
+        needsAthleteProfile = false,
+    ),
+}
+
+/** Optional body context. Everything is nullable — advice degrades gracefully. */
+data class AthleteProfile(
+    val age: Int? = null,
+    val sex: String? = null,
+    val heightCm: Int? = null,
+    val weightKg: Int? = null,
+    val goal: String? = null,
+    val experience: String? = null,
+    val equipment: String? = null,
+    val dietaryNotes: String? = null,
+    val injuries: String? = null,
+) {
+    val isEmpty: Boolean
+        get() = listOf(age, sex, heightCm, weightKg, goal, experience, equipment, dietaryNotes, injuries)
+            .all { it == null || (it is String && it.isBlank()) }
+
+    companion object {
+        val goals = listOf("Build muscle", "Lose fat", "Recomposition", "Strength", "General health")
+        val experienceLevels = listOf("Beginner", "Intermediate", "Advanced")
+        val equipmentOptions = listOf("Full gym", "Home gym", "Dumbbells only", "Bodyweight only")
+    }
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/domain/DailyQuests.kt
+  LINES: 129
+==============================================================================
+
+package com.ascend.app.domain
+
+import kotlin.random.Random
+
+enum class DailyQuestKind {
+    /** Finish every non-negotiable today. */
+    PERFECT_DAY,
+    /** Complete a specific habit. */
+    TARGET_HABIT,
+    /** Complete any N optional habits. */
+    OPTIONAL_COUNT,
+    /** Finish a focus session. */
+    FOCUS_SESSION,
+    /** Complete any N habits at all. */
+    TOTAL_COUNT,
+}
+
+/** A quest The System issues for a single day, on top of the normal list. */
+data class GeneratedQuest(
+    val kind: DailyQuestKind,
+    val description: String,
+    val targetCount: Int,
+    val targetHabitId: Long?,
+    val xpReward: Int,
+    val goldReward: Int,
+)
+
+/**
+ * Builds one bonus quest per day. Seeded by the date so the quest is stable
+ * across app restarts within a day, but different day to day — the novelty
+ * that a fixed habit list can't provide on its own.
+ */
+object DailyQuests {
+
+    fun generate(
+        dateSeed: Long,
+        nonNegotiables: List<Long>,
+        optionalHabits: List<Long>,
+        focusHabits: List<Long>,
+        habitNameOf: (Long) -> String,
+    ): GeneratedQuest? {
+        val totalHabits = nonNegotiables.size + optionalHabits.size
+        if (totalHabits == 0) return null
+
+        val random = Random(dateSeed)
+        val candidates = buildList {
+            if (nonNegotiables.isNotEmpty()) add(DailyQuestKind.PERFECT_DAY)
+            if (nonNegotiables.isNotEmpty() || optionalHabits.isNotEmpty()) add(DailyQuestKind.TARGET_HABIT)
+            if (optionalHabits.size >= 2) add(DailyQuestKind.OPTIONAL_COUNT)
+            if (focusHabits.isNotEmpty()) add(DailyQuestKind.FOCUS_SESSION)
+            if (totalHabits >= 3) add(DailyQuestKind.TOTAL_COUNT)
+        }
+        if (candidates.isEmpty()) return null
+
+        return when (candidates[random.nextInt(candidates.size)]) {
+            DailyQuestKind.PERFECT_DAY -> GeneratedQuest(
+                kind = DailyQuestKind.PERFECT_DAY,
+                description = "Clear every non-negotiable today.",
+                targetCount = nonNegotiables.size,
+                targetHabitId = null,
+                xpReward = 40,
+                goldReward = Economy.DAILY_QUEST_GOLD,
+            )
+
+            DailyQuestKind.TARGET_HABIT -> {
+                val pool = nonNegotiables + optionalHabits
+                val habitId = pool[random.nextInt(pool.size)]
+                GeneratedQuest(
+                    kind = DailyQuestKind.TARGET_HABIT,
+                    description = "Complete “${habitNameOf(habitId)}”.",
+                    targetCount = 1,
+                    targetHabitId = habitId,
+                    xpReward = 25,
+                    goldReward = Economy.DAILY_QUEST_GOLD,
+                )
+            }
+
+            DailyQuestKind.OPTIONAL_COUNT -> {
+                val target = minOf(2, optionalHabits.size)
+                GeneratedQuest(
+                    kind = DailyQuestKind.OPTIONAL_COUNT,
+                    description = "Complete any $target optional habits.",
+                    targetCount = target,
+                    targetHabitId = null,
+                    xpReward = 30,
+                    goldReward = Economy.DAILY_QUEST_GOLD,
+                )
+            }
+
+            DailyQuestKind.FOCUS_SESSION -> GeneratedQuest(
+                kind = DailyQuestKind.FOCUS_SESSION,
+                description = "Finish one full focus session.",
+                targetCount = 1,
+                targetHabitId = null,
+                xpReward = 35,
+                goldReward = Economy.DAILY_QUEST_GOLD,
+            )
+
+            DailyQuestKind.TOTAL_COUNT -> {
+                val target = minOf(3, totalHabits)
+                GeneratedQuest(
+                    kind = DailyQuestKind.TOTAL_COUNT,
+                    description = "Complete any $target habits today.",
+                    targetCount = target,
+                    targetHabitId = null,
+                    xpReward = 30,
+                    goldReward = Economy.DAILY_QUEST_GOLD,
+                )
+            }
+        }
+    }
+
+    /** How far along today's quest is, given what's been done. */
+    fun progress(
+        kind: DailyQuestKind,
+        targetHabitId: Long?,
+        targetCount: Int,
+        completedHabitIds: Set<Long>,
+        nonNegotiables: List<Long>,
+        optionalHabits: List<Long>,
+        focusSessionsToday: Int,
+    ): Int = when (kind) {
+        DailyQuestKind.PERFECT_DAY -> nonNegotiables.count { it in completedHabitIds }
+        DailyQuestKind.TARGET_HABIT -> if (targetHabitId in completedHabitIds) 1 else 0
+        DailyQuestKind.OPTIONAL_COUNT -> optionalHabits.count { it in completedHabitIds }
+        DailyQuestKind.FOCUS_SESSION -> focusSessionsToday.coerceAtMost(targetCount)
+        DailyQuestKind.TOTAL_COUNT -> completedHabitIds.size
+    }.coerceAtMost(targetCount)
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/domain/Economy.kt
+  LINES: 20
+==============================================================================
+
+package com.ascend.app.domain
+
+/** Gold rewards. Kept small relative to reward prices so buying something
+ * takes real days of consistency rather than a single good afternoon. */
+object Economy {
+    const val NON_NEGOTIABLE_GOLD = 10
+    const val OPTIONAL_GOLD = 5
+    const val PENALTY_QUEST_GOLD = 15
+    const val DAILY_QUEST_GOLD = 25
+    const val FOCUS_SESSION_GOLD = 8
+
+    /** Suggested costs shown when creating a reward, so the scale is legible. */
+    val suggestedRewardCosts = listOf(50, 100, 250, 500, 1000)
+
+    fun goldForCompletion(isNonNegotiable: Boolean, isPenaltyQuest: Boolean): Int = when {
+        isPenaltyQuest -> PENALTY_QUEST_GOLD
+        isNonNegotiable -> NON_NEGOTIABLE_GOLD
+        else -> OPTIONAL_GOLD
+    }
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/domain/Gates.kt
+  LINES: 80
+==============================================================================
+
+package com.ascend.app.domain
+
+import java.time.LocalDate
+
+/**
+ * Gates are the only place the app asks you to take a real risk, and they are
+ * deliberately opt-in with a fixed stake.
+ *
+ * The research on gamification is blunt about this: loss-aversion and scarcity
+ * ("black hat" motivation) drive compulsion rather than habit, and a system
+ * that leans on them is building dependency. So nothing here is mandatory,
+ * nothing expires on its own, ignoring Gates entirely costs you nothing, and
+ * the stake can never exceed what a Gate pays back.
+ *
+ * What they *do* provide is self-selected difficulty — the Yerkes-Dodson point
+ * that performance peaks at moderate pressure, made into something you choose
+ * rather than something imposed.
+ */
+enum class GateRank(
+    val displayName: String,
+    val days: Int,
+    val stake: Int,
+    val rewardMultiplier: Double,
+    val xpReward: Int,
+    val requiredHunterLevel: Int,
+) {
+    E("E-Rank Gate", days = 3, stake = 50, rewardMultiplier = 2.0, xpReward = 60, requiredHunterLevel = 1),
+    D("D-Rank Gate", days = 5, stake = 120, rewardMultiplier = 2.2, xpReward = 140, requiredHunterLevel = 5),
+    C("C-Rank Gate", days = 7, stake = 250, rewardMultiplier = 2.5, xpReward = 300, requiredHunterLevel = 10),
+    B("B-Rank Gate", days = 14, stake = 500, rewardMultiplier = 3.0, xpReward = 700, requiredHunterLevel = 20),
+    A("A-Rank Gate", days = 21, stake = 900, rewardMultiplier = 3.5, xpReward = 1400, requiredHunterLevel = 35),
+    S("S-Rank Gate", days = 30, stake = 1500, rewardMultiplier = 4.0, xpReward = 2500, requiredHunterLevel = 55),
+    ;
+
+    /** Gold returned on a clear, stake included. */
+    val payout: Int get() = (stake * rewardMultiplier).toInt()
+
+    companion object {
+        fun availableAt(hunterLevel: Int): List<GateRank> =
+            entries.filter { hunterLevel >= it.requiredHunterLevel }
+    }
+}
+
+enum class GateStatus { ACTIVE, CLEARED, FAILED }
+
+data class GateRun(
+    val id: Long,
+    val rank: GateRank,
+    val startDate: LocalDate,
+    val daysCleared: Int,
+    val status: GateStatus,
+) {
+    val daysRemaining: Int get() = (rank.days - daysCleared).coerceAtLeast(0)
+    val progressFraction: Float get() = daysCleared.toFloat() / rank.days.coerceAtLeast(1)
+}
+
+object Gates {
+    /** You can only be inside one Gate at a time — keeps the choice sharp. */
+    fun canEnter(activeRun: GateRun?, rank: GateRank, hunterLevel: Int, gold: Int): Boolean =
+        activeRun == null && hunterLevel >= rank.requiredHunterLevel && gold >= rank.stake
+
+    /**
+     * Advances a run for one finished day. A perfect day banks progress; any
+     * miss fails the run outright, which is what makes the stake mean anything.
+     */
+    fun advance(run: GateRun, dayWasPerfect: Boolean): GateRun = when {
+        run.status != GateStatus.ACTIVE -> run
+        !dayWasPerfect -> run.copy(status = GateStatus.FAILED)
+        run.daysCleared + 1 >= run.rank.days ->
+            run.copy(daysCleared = run.rank.days, status = GateStatus.CLEARED)
+        else -> run.copy(daysCleared = run.daysCleared + 1)
+    }
+
+    /** Gold paid out on a clear; nothing on an active or failed run. */
+    fun goldPayout(run: GateRun): Int =
+        if (run.status == GateStatus.CLEARED) run.rank.payout else 0
+
+    fun xpPayout(run: GateRun): Int =
+        if (run.status == GateStatus.CLEARED) run.rank.xpReward else 0
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/domain/HunterClass.kt
+  LINES: 59
+==============================================================================
+
+package com.ascend.app.domain
+
+/**
+ * The Job Change payoff. Locked until [UNLOCK_RANK]; choosing one is
+ * permanent-feeling but changeable from the profile, and each grants a
+ * passive that stacks on top of [StatEffects].
+ */
+enum class HunterClass(
+    val displayName: String,
+    val tagline: String,
+    val xpBonusPercent: Int = 0,
+    val goldBonusPercent: Int = 0,
+    val penaltyResistPercent: Int = 0,
+    val focusBonusPercent: Int = 0,
+) {
+    NONE("Unassigned", "No class chosen yet."),
+
+    SCHOLAR(
+        displayName = "Scholar",
+        tagline = "+20% XP from everything. Levels fastest.",
+        xpBonusPercent = 20,
+    ),
+    MERCHANT(
+        displayName = "Merchant",
+        tagline = "+35% Gold. Buys rewards twice as often.",
+        goldBonusPercent = 35,
+    ),
+    SENTINEL(
+        displayName = "Sentinel",
+        tagline = "−40% penalty damage. Survives bad weeks.",
+        penaltyResistPercent = 40,
+    ),
+    ASSASSIN(
+        displayName = "Assassin",
+        tagline = "+50% focus session bonus. Rewards deep work.",
+        focusBonusPercent = 50,
+    ),
+    SHADOW_MONARCH(
+        displayName = "Shadow Monarch",
+        tagline = "+10% to everything. Balanced, unlocked at S-Rank.",
+        xpBonusPercent = 10,
+        goldBonusPercent = 10,
+        penaltyResistPercent = 10,
+        focusBonusPercent = 10,
+    ),
+    ;
+
+    companion object {
+        /** Job Change becomes available here — a genuine mid-game milestone. */
+        val UNLOCK_RANK = Rank.C
+
+        /** Shadow Monarch is deliberately gated behind the endgame rank. */
+        fun selectableAt(rank: Rank): List<HunterClass> {
+            if (rank.ordinal < UNLOCK_RANK.ordinal) return emptyList()
+            val base = listOf(SCHOLAR, MERCHANT, SENTINEL, ASSASSIN)
+            return if (rank == Rank.S) base + SHADOW_MONARCH else base
+        }
+    }
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/domain/HunterLoadout.kt
+  LINES: 105
+==============================================================================
+
+package com.ascend.app.domain
+
+import kotlin.math.roundToInt
+
+/**
+ * Everything that modifies a payout, in one value.
+ *
+ * Before this existed, each effect function grew another parameter every time
+ * a system was added (`classXpBonusPercent`, then shadows, then skills...).
+ * Bundling them means the interactions live in one readable place and the
+ * call sites stay short — which matters, because the interactions *are* the
+ * design.
+ */
+data class HunterLoadout(
+    /** Natural level per stat, derived from XP. */
+    val statLevels: Map<Stat, Int> = Stat.entries.associateWith { 1 },
+    /** Manually allocated stat points, on top of the natural level. */
+    val allocatedPoints: Map<Stat, Int> = emptyMap(),
+    val unlockedSkills: Set<Skill> = emptySet(),
+    val shadows: List<Shadow> = emptyList(),
+    val hunterClass: HunterClass = HunterClass.NONE,
+) {
+    /** Allocated points raise a stat exactly as if it had levelled naturally. */
+    fun effectiveLevel(stat: Stat): Int =
+        (statLevels[stat] ?: 1) + (allocatedPoints[stat] ?: 0)
+
+    fun has(skill: Skill): Boolean = skill in unlockedSkills
+
+    private val monarchBonus: Int get() = if (has(Skill.MONARCHS_WILL)) 10 else 0
+
+    private fun shadowBonus(stat: Stat): Int =
+        Shadows.bonusPercentFor(stat, shadows, has(Skill.SHADOW_PRESERVATION))
+
+    // ---- Resolved effect percentages -------------------------------------
+
+    fun xpBonusPercent(): Int =
+        StatEffects.xpBonusPercent(effectiveLevel(Stat.INT)) +
+            hunterClass.xpBonusPercent +
+            shadowBonus(Stat.INT) +
+            monarchBonus
+
+    fun goldBonusPercent(isOptionalHabit: Boolean): Int =
+        StatEffects.goldBonusPercent(effectiveLevel(Stat.STR)) +
+            hunterClass.goldBonusPercent +
+            shadowBonus(Stat.STR) +
+            monarchBonus +
+            if (isOptionalHabit && has(Skill.COIN_PURSE)) 30 else 0
+
+    fun penaltyResistPercent(): Int =
+        StatEffects.penaltyResistPercent(effectiveLevel(Stat.VIT)) +
+            hunterClass.penaltyResistPercent +
+            shadowBonus(Stat.VIT) +
+            monarchBonus
+
+    fun focusBonusPercent(): Int =
+        StatEffects.focusBonusPercent(effectiveLevel(Stat.PER)) +
+            hunterClass.focusBonusPercent +
+            shadowBonus(Stat.PER) +
+            monarchBonus +
+            if (has(Skill.SCHOLARS_EYE)) 25 else 0
+
+    fun streakBonusPercent(streakDays: Int): Int =
+        StatEffects.streakBonusPercent(streakDays, effectiveLevel(Stat.AGI))
+
+    /** Penalty quests normally pay 1.5x; Ruler's Authority raises it. */
+    fun penaltyQuestMultiplier(): Double =
+        if (has(Skill.RULERS_AUTHORITY)) 2.5 else Leveling.PENALTY_QUEST_MULTIPLIER
+
+    fun dailyQuestMultiplier(): Int = if (has(Skill.DOMAIN_EXPANSION)) 2 else 1
+
+    // ---- Final payouts ----------------------------------------------------
+
+    private fun applyPercent(base: Int, percent: Int): Int =
+        (base * (1 + percent / 100.0)).roundToInt().coerceAtLeast(1)
+
+    fun finalXp(isNonNegotiable: Boolean, isPenaltyQuest: Boolean, streakDays: Int): Int {
+        val base = if (isNonNegotiable) Leveling.NON_NEGOTIABLE_XP else Leveling.OPTIONAL_XP
+        val withQuest =
+            if (isPenaltyQuest) (base * penaltyQuestMultiplier()).roundToInt() else base
+        return applyPercent(withQuest, xpBonusPercent() + streakBonusPercent(streakDays))
+    }
+
+    fun finalGold(isNonNegotiable: Boolean, isPenaltyQuest: Boolean): Int {
+        val base = Economy.goldForCompletion(isNonNegotiable, isPenaltyQuest)
+        return applyPercent(base, goldBonusPercent(isOptionalHabit = !isNonNegotiable))
+    }
+
+    /**
+     * Penalty XP loss. Second Wind can waive it entirely for the first miss of
+     * a week; otherwise resistance is clamped so a penalty is never fully
+     * negated — accountability has to keep some teeth.
+     */
+    fun finalPenalty(isFirstMissThisWeek: Boolean): Int {
+        if (has(Skill.SECOND_WIND) && isFirstMissThisWeek) return 0
+        val resist = penaltyResistPercent().coerceIn(0, 90)
+        return (Leveling.PENALTY_XP_LOSS * (1 - resist / 100.0)).roundToInt().coerceAtLeast(1)
+    }
+
+    fun finalFocusBonus(): Int =
+        applyPercent(Leveling.FOCUS_SESSION_BONUS_XP, focusBonusPercent())
+
+    /** Iron Body absorbs one miss per rolling week before a streak breaks. */
+    fun streakSurvivesMiss(missesThisWeek: Int): Boolean =
+        has(Skill.IRON_BODY) && missesThisWeek <= 1
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/domain/Leveling.kt
+  LINES: 95
+==============================================================================
+
+package com.ascend.app.domain
+
+import kotlin.math.floor
+import kotlin.math.sqrt
+
+/** Level + progress-within-level, ready for a progress bar. */
+data class LevelProgress(val level: Int, val xpIntoLevel: Int, val xpSpanForLevel: Int) {
+    val fraction: Float get() = if (xpSpanForLevel <= 0) 1f else xpIntoLevel.toFloat() / xpSpanForLevel
+}
+
+/**
+ * Pure, Android-free leveling/XP/penalty math. See design spec §4 and §4.5.
+ * Every constant here is deliberately simple — no lookup tables, no streak
+ * multipliers in v1.
+ */
+object Leveling {
+    const val NON_NEGOTIABLE_XP = 20
+    const val OPTIONAL_XP = 10
+    const val PENALTY_QUEST_MULTIPLIER = 1.5
+    const val PENALTY_XP_LOSS = 15
+    const val FOCUS_SESSION_BONUS_XP = 15
+
+    /** Hunter Level is derived from the same curve as stat levels, but scaled
+     * down first so it deliberately lags behind any single maxed-out stat —
+     * ranking up rewards breadth, not one obsession. */
+    private const val HUNTER_LEVEL_SCALE = 8
+
+    /** Rolling-week miss count that triggers the Yerkes-Dodson recalibration nudge. */
+    const val RECALIBRATION_MISS_THRESHOLD = 3
+
+    /** XP awarded for completing a habit today. */
+    fun xpForCompletion(isNonNegotiable: Boolean, isPenaltyQuest: Boolean): Int {
+        val base = if (isNonNegotiable) NON_NEGOTIABLE_XP else OPTIONAL_XP
+        return if (isPenaltyQuest) (base * PENALTY_QUEST_MULTIPLIER).toInt() else base
+    }
+
+    /** level = floor(sqrt(xp / 50)) + 1 — simple, monotonic, diminishing returns. */
+    fun levelForXp(xp: Int): Int {
+        if (xp <= 0) return 1
+        return floor(sqrt(xp / 50.0)).toInt() + 1
+    }
+
+    /** Minimum XP required to *be at* [level] (inverse of [levelForXp]). */
+    fun xpFloorForLevel(level: Int): Int {
+        if (level <= 1) return 0
+        val n = level - 1
+        return n * n * 50
+    }
+
+    fun progressForXp(xp: Int): LevelProgress {
+        val level = levelForXp(xp)
+        val floor = xpFloorForLevel(level)
+        val nextFloor = xpFloorForLevel(level + 1)
+        val span = (nextFloor - floor).coerceAtLeast(1)
+        return LevelProgress(level, (xp - floor).coerceIn(0, span), span)
+    }
+
+    fun hunterLevelForTotalXp(totalXp: Int): Int = levelForXp(totalXp / HUNTER_LEVEL_SCALE)
+
+    fun rankForTotalXp(totalXp: Int): Rank = Rank.forHunterLevel(hunterLevelForTotalXp(totalXp))
+
+    /** Progress-within-level for the Hunter ring, on the same scaled basis as [hunterLevelForTotalXp]. */
+    fun hunterLevelProgress(totalXp: Int): LevelProgress = progressForXp(totalXp / HUNTER_LEVEL_SCALE)
+
+    /**
+     * Applies the flat XP penalty for a missed non-negotiable, floored at the
+     * XP required for the stat's *current* level — a bad day can't erase a
+     * level already earned.
+     */
+    fun applyPenalty(currentStatXp: Int): Int = applyPenaltyOf(currentStatXp, PENALTY_XP_LOSS)
+
+    /** As [applyPenalty], but with the loss already adjusted for Health/class
+     * resistance. The level floor still applies. */
+    fun applyPenaltyOf(currentStatXp: Int, penaltyAmount: Int): Int {
+        val floor = xpFloorForLevel(levelForXp(currentStatXp))
+        return (currentStatXp - penaltyAmount).coerceAtLeast(floor)
+    }
+
+    /** Next streak value given whether today was completed. */
+    fun nextStreak(previousStreak: Int, completedToday: Boolean): Int =
+        if (completedToday) previousStreak + 1 else 0
+
+    /** Yerkes-Dodson recalibration nudge: too many misses in a rolling week. */
+    fun shouldShowRecalibrationNudge(missesInLast7Days: Int): Boolean =
+        missesInLast7Days >= RECALIBRATION_MISS_THRESHOLD
+
+    /** Deliberate-practice target-bump suggestion: 3 "too easy" ratings in a row. */
+    fun shouldSuggestRaisingTarget(lastThreeRatings: List<DifficultyRating>): Boolean =
+        lastThreeRatings.size >= 3 && lastThreeRatings.takeLast(3).all { it == DifficultyRating.TOO_EASY }
+
+    /** Streak milestones that generate an Evidence Log entry. */
+    val streakMilestones = listOf(7, 30, 100)
+
+    fun isStreakMilestone(streak: Int): Boolean = streak in streakMilestones
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/domain/Shadows.kt
+  LINES: 50
+==============================================================================
+
+package com.ascend.app.domain
+
+/**
+ * A Shadow extracted from a habit you missed and then redeemed.
+ *
+ * Thematically this is the manhwa's signature mechanic — defeated enemies
+ * become permanent soldiers. Mechanically it's the reason failing is worth
+ * recovering from rather than hiding: a miss you redeem leaves you
+ * permanently stronger than never having missed at all, which is a far
+ * healthier framing than pure loss-aversion.
+ */
+data class Shadow(
+    val id: Long,
+    val name: String,
+    val habitId: Long,
+    val stat: Stat,
+    val extractedAtEpochMillis: Long,
+    /** Rises each time the same habit is redeemed again. */
+    val rank: Int = 1,
+)
+
+object Shadows {
+    /** Each shadow rank contributes this much bonus to its stat. */
+    const val PERCENT_PER_RANK = 2
+
+    /** Hard ceiling per stat, so shadow farming can't dominate the build. */
+    const val MAX_PERCENT_PER_STAT = 30
+
+    /**
+     * Bonus percent this collection grants to [stat]. Doubled by
+     * SHADOW_PRESERVATION, but the cap still applies afterwards — the skill
+     * makes reaching the ceiling easier, it doesn't raise it.
+     */
+    fun bonusPercentFor(stat: Stat, shadows: List<Shadow>, preservation: Boolean): Int {
+        val raw = shadows.filter { it.stat == stat }.sumOf { it.rank * PERCENT_PER_RANK }
+        val scaled = if (preservation) raw * 2 else raw
+        return scaled.coerceAtMost(MAX_PERCENT_PER_STAT)
+    }
+
+    /** Shadows are named after the habit they were extracted from. */
+    fun nameFor(habitName: String): String = habitName.trim().ifBlank { "Unnamed" }
+
+    /** Flavour label shown next to a shadow, escalating with rank. */
+    fun rankTitle(rank: Int): String = when {
+        rank >= 10 -> "Marshal"
+        rank >= 6 -> "Commander"
+        rank >= 3 -> "Knight"
+        else -> "Soldier"
+    }
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/domain/Skills.kt
+  LINES: 104
+==============================================================================
+
+package com.ascend.app.domain
+
+/**
+ * Skills deliberately do NOT add parallel systems — every one of them rewrites
+ * a rule that already exists (penalty size, quest payout, streak survival,
+ * gold rate). That's where depth comes from: a handful of mechanics that
+ * interact, rather than a pile of features sitting side by side.
+ */
+enum class Skill(
+    val displayName: String,
+    val description: String,
+    val cost: Int,
+    val requiredHunterLevel: Int,
+    val tier: Int,
+) {
+    // ---- Tier 1 ----------------------------------------------------------
+    IRON_BODY(
+        displayName = "Iron Body",
+        description = "Your streak survives one missed day every 7 days.",
+        cost = 1,
+        requiredHunterLevel = 1,
+        tier = 1,
+    ),
+    SCHOLARS_EYE(
+        displayName = "Scholar's Eye",
+        description = "+25% XP from completed focus sessions.",
+        cost = 1,
+        requiredHunterLevel = 1,
+        tier = 1,
+    ),
+    COIN_PURSE(
+        displayName = "Coin Purse",
+        description = "+30% Gold from optional habits.",
+        cost = 1,
+        requiredHunterLevel = 3,
+        tier = 1,
+    ),
+
+    // ---- Tier 2 ----------------------------------------------------------
+    RULERS_AUTHORITY(
+        displayName = "Ruler's Authority",
+        description = "Penalty quests pay 2.5x instead of 1.5x.",
+        cost = 2,
+        requiredHunterLevel = 8,
+        tier = 2,
+    ),
+    SECOND_WIND(
+        displayName = "Second Wind",
+        description = "The first missed non-negotiable each week costs no XP.",
+        cost = 2,
+        requiredHunterLevel = 8,
+        tier = 2,
+    ),
+    MANA_CONVERSION(
+        displayName = "Mana Conversion",
+        description = "Trade Gold for XP from the System screen.",
+        cost = 2,
+        requiredHunterLevel = 12,
+        tier = 2,
+    ),
+
+    // ---- Tier 3 ----------------------------------------------------------
+    SHADOW_PRESERVATION(
+        displayName = "Shadow Preservation",
+        description = "Every Shadow you command grants double its bonus.",
+        cost = 3,
+        requiredHunterLevel = 18,
+        tier = 3,
+    ),
+    DOMAIN_EXPANSION(
+        displayName = "Domain Expansion",
+        description = "Daily Quest rewards are doubled.",
+        cost = 3,
+        requiredHunterLevel = 18,
+        tier = 3,
+    ),
+    MONARCHS_WILL(
+        displayName = "Monarch's Will",
+        description = "+10 percentage points to every stat effect.",
+        cost = 3,
+        requiredHunterLevel = 25,
+        tier = 3,
+    ),
+    ;
+
+    companion object {
+        /** Skill points earned: one per 2 Hunter Levels, plus two per rank crossed. */
+        fun pointsEarned(hunterLevel: Int, rank: Rank): Int =
+            (hunterLevel / 2) + (rank.ordinal * 2)
+
+        fun pointsSpent(unlocked: Set<Skill>): Int = unlocked.sumOf { it.cost }
+
+        fun pointsAvailable(hunterLevel: Int, rank: Rank, unlocked: Set<Skill>): Int =
+            pointsEarned(hunterLevel, rank) - pointsSpent(unlocked)
+
+        /** A skill is buyable only if it's locked, level-gated open, and affordable. */
+        fun canUnlock(skill: Skill, hunterLevel: Int, rank: Rank, unlocked: Set<Skill>): Boolean =
+            skill !in unlocked &&
+                hunterLevel >= skill.requiredHunterLevel &&
+                pointsAvailable(hunterLevel, rank, unlocked) >= skill.cost
+
+        val byTier: Map<Int, List<Skill>> get() = entries.groupBy { it.tier }
+    }
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/domain/StarterHabits.kt
+  LINES: 121
+==============================================================================
+
+package com.ascend.app.domain
+
+/** A habit template used by the starter packs and the "suggest a stat" helper. */
+data class HabitTemplate(
+    val name: String,
+    val stat: Stat,
+    val isNonNegotiable: Boolean,
+    val focusMinutes: Int? = null,
+)
+
+data class StarterPack(
+    val id: String,
+    val title: String,
+    val subtitle: String,
+    val habits: List<HabitTemplate>,
+)
+
+/**
+ * Pre-built habit sets so the app is usable the moment it opens, instead of
+ * making someone type in seven habits before anything works.
+ *
+ * The "Full discipline system" pack mirrors the daily non-negotiables and
+ * other-habits lists from the journal this app was designed around.
+ */
+object StarterHabits {
+
+    val EASE_IN = StarterPack(
+        id = "ease_in",
+        title = "Start small",
+        subtitle = "3 habits. Build the streak first, add more later.",
+        habits = listOf(
+            HabitTemplate("Wake up before 7am", Stat.VIT, isNonNegotiable = true),
+            HabitTemplate("Read 20 minutes", Stat.INT, isNonNegotiable = true, focusMinutes = 20),
+            HabitTemplate("Bed before 11:30", Stat.VIT, isNonNegotiable = true),
+        ),
+    )
+
+    val FULL_SYSTEM = StarterPack(
+        id = "full_system",
+        title = "Full discipline system",
+        subtitle = "7 non-negotiables + 5 extras. The complete setup.",
+        habits = listOf(
+            HabitTemplate("Wake up before 7am", Stat.VIT, isNonNegotiable = true),
+            HabitTemplate("Cold shower", Stat.STR, isNonNegotiable = true),
+            HabitTemplate("No phone until 11am", Stat.PER, isNonNegotiable = true),
+            HabitTemplate("2+ hr deep work", Stat.INT, isNonNegotiable = true, focusMinutes = 60),
+            HabitTemplate("10k steps", Stat.AGI, isNonNegotiable = true),
+            HabitTemplate("Read 20 minutes", Stat.INT, isNonNegotiable = true, focusMinutes = 20),
+            HabitTemplate("Bed before 11:30", Stat.VIT, isNonNegotiable = true),
+            HabitTemplate("Stretch / mobility", Stat.STR, isNonNegotiable = false, focusMinutes = 10),
+            HabitTemplate("Journal", Stat.PER, isNonNegotiable = false, focusMinutes = 10),
+            HabitTemplate("Drink 2L water", Stat.VIT, isNonNegotiable = false),
+            HabitTemplate("No sugar", Stat.VIT, isNonNegotiable = false),
+            HabitTemplate("Meditate", Stat.PER, isNonNegotiable = false, focusMinutes = 10),
+        ),
+    )
+
+    val BODY = StarterPack(
+        id = "body",
+        title = "Body focus",
+        subtitle = "Training, sleep and movement.",
+        habits = listOf(
+            HabitTemplate("Workout", Stat.STR, isNonNegotiable = true, focusMinutes = 45),
+            HabitTemplate("10k steps", Stat.AGI, isNonNegotiable = true),
+            HabitTemplate("8 hours sleep", Stat.VIT, isNonNegotiable = true),
+            HabitTemplate("Stretch / mobility", Stat.STR, isNonNegotiable = false, focusMinutes = 10),
+            HabitTemplate("Drink 2L water", Stat.VIT, isNonNegotiable = false),
+        ),
+    )
+
+    val MIND = StarterPack(
+        id = "mind",
+        title = "Mind focus",
+        subtitle = "Deep work, reading and attention.",
+        habits = listOf(
+            HabitTemplate("2+ hr deep work", Stat.INT, isNonNegotiable = true, focusMinutes = 60),
+            HabitTemplate("No phone until 11am", Stat.PER, isNonNegotiable = true),
+            HabitTemplate("Read 20 minutes", Stat.INT, isNonNegotiable = true, focusMinutes = 20),
+            HabitTemplate("Meditate", Stat.PER, isNonNegotiable = false, focusMinutes = 10),
+            HabitTemplate("Journal", Stat.PER, isNonNegotiable = false, focusMinutes = 10),
+        ),
+    )
+
+    val all = listOf(EASE_IN, FULL_SYSTEM, BODY, MIND)
+
+    /**
+     * Guesses which stat a habit belongs to from its name, so people don't
+     * silently file "Read 20 min" under Strength. Falls back to [Stat.VIT]
+     * (general maintenance) when nothing matches.
+     */
+    fun suggestStat(habitName: String): Stat {
+        val name = habitName.lowercase()
+        val matches = listOf(
+            Stat.STR to listOf(
+                "workout", "gym", "train", "lift", "weights", "push", "pull", "run",
+                "exercise", "cold shower", "stretch", "mobility", "yoga", "sport",
+            ),
+            // Deliberately no bare "work" here — it swallows things like
+            // "cycle to work" that belong to another stat.
+            Stat.INT to listOf(
+                "read", "study", "deep work", "learn", "write", "code", "course",
+                "book", "practice", "language", "revise",
+            ),
+            Stat.PER to listOf(
+                "meditate", "meditation", "journal", "reflect", "breathe", "no phone",
+                "phone", "screen", "social media", "scroll", "mindful", "gratitude",
+            ),
+            Stat.AGI to listOf(
+                "steps", "walk", "cardio", "bike", "cycle", "swim", "move", "sprint",
+            ),
+            Stat.VIT to listOf(
+                "sleep", "bed", "wake", "water", "hydrate", "eat", "meal", "diet",
+                "sugar", "vitamin", "rest", "nap", "clean",
+            ),
+        )
+        for ((stat, keywords) in matches) {
+            if (keywords.any { name.contains(it) }) return stat
+        }
+        return Stat.VIT
+    }
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/domain/Stat.kt
+  LINES: 42
+==============================================================================
+
+package com.ascend.app.domain
+
+/**
+ * The 5 fixed stat categories every habit is tagged to. See design spec §3.
+ *
+ * [plainName] exists because "PER" means nothing on its own — the UI always
+ * shows the plain word alongside the RPG label.
+ */
+enum class Stat(
+    val displayName: String,
+    val shortLabel: String,
+    val plainName: String,
+    val description: String,
+) {
+    STR("Strength", "STR", "Body", "Training, cold showers, physical effort"),
+    VIT("Vitality", "VIT", "Health", "Sleep, food, water — how you maintain yourself"),
+    INT("Intellect", "INT", "Mind", "Reading, deep work, learning"),
+    PER("Perception", "PER", "Focus", "Meditation, journaling, staying off your phone"),
+    AGI("Agility", "AGI", "Movement", "Steps, cardio, getting your body moving"),
+}
+
+/** Hunter rank, derived from overall Hunter Level. See design spec §4. */
+enum class Rank(val displayName: String, val minHunterLevel: Int) {
+    E("E-Rank", 1),
+    D("D-Rank", 5),
+    C("C-Rank", 10),
+    B("B-Rank", 20),
+    A("A-Rank", 35),
+    S("S-Rank", 55),
+    ;
+
+    companion object {
+        fun forHunterLevel(level: Int): Rank =
+            entries.lastOrNull { level >= it.minHunterLevel } ?: E
+    }
+}
+
+/** Post-Focus-Session self-rating, feeds the deliberate-practice target-bump suggestion. */
+enum class DifficultyRating { TOO_EASY, JUST_RIGHT, TOO_HARD }
+
+/** The three kinds of proof events that populate the Evidence Log. See spec §4.5. */
+enum class EvidenceType { PENALTY_REDEMPTION, STREAK_MILESTONE, HARD_FOCUS_SESSION }
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/domain/StatAllocation.kt
+  LINES: 33
+==============================================================================
+
+package com.ascend.app.domain
+
+/**
+ * The choice layer. Levelling used to be entirely passive — numbers rose and
+ * you watched. Now each Hunter Level hands you points you have to spend, and
+ * since every stat does something different, spending them is a real
+ * trade-off with no dominant answer.
+ */
+object StatAllocation {
+    const val POINTS_PER_LEVEL = 3
+
+    /** Respec costs gold, so rebuilding is possible but not free. */
+    const val RESPEC_GOLD_COST = 250
+
+    fun pointsEarned(hunterLevel: Int): Int =
+        ((hunterLevel - 1) * POINTS_PER_LEVEL).coerceAtLeast(0)
+
+    fun pointsSpent(allocated: Map<Stat, Int>): Int = allocated.values.sum()
+
+    fun pointsAvailable(hunterLevel: Int, allocated: Map<Stat, Int>): Int =
+        (pointsEarned(hunterLevel) - pointsSpent(allocated)).coerceAtLeast(0)
+
+    fun canAllocate(hunterLevel: Int, allocated: Map<Stat, Int>): Boolean =
+        pointsAvailable(hunterLevel, allocated) > 0
+
+    /** Returns the new allocation map, or the original if no points are free. */
+    fun allocate(stat: Stat, hunterLevel: Int, allocated: Map<Stat, Int>): Map<Stat, Int> {
+        if (!canAllocate(hunterLevel, allocated)) return allocated
+        return allocated + (stat to ((allocated[stat] ?: 0) + 1))
+    }
+
+    fun respec(): Map<Stat, Int> = emptyMap()
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/domain/StatEffects.kt
+  LINES: 84
+==============================================================================
+
+package com.ascend.app.domain
+
+import kotlin.math.roundToInt
+
+/**
+ * Makes the 5 stats actually *do* something. In v1 they were decorative
+ * counters — leveling Body changed nothing about how the app played, which
+ * is the main reason progression felt hollow.
+ *
+ * Every effect is a percentage that scales with that stat's level and is
+ * capped, so a single obsessively-farmed stat can't trivialise the game.
+ */
+object StatEffects {
+
+    /** Percent bonus per level above 1, and the ceiling for each effect. */
+    private const val PER_LEVEL = 3
+    private const val CAP = 60
+
+    private fun bonusPercent(level: Int): Int =
+        ((level - 1) * PER_LEVEL).coerceIn(0, CAP)
+
+    /** Mind (INT): every completion yields more XP. */
+    fun xpBonusPercent(mindLevel: Int): Int = bonusPercent(mindLevel)
+
+    /** Body (STR): every completion yields more Gold. */
+    fun goldBonusPercent(bodyLevel: Int): Int = bonusPercent(bodyLevel)
+
+    /** Health (VIT): missed non-negotiables cost less XP. */
+    fun penaltyResistPercent(healthLevel: Int): Int = bonusPercent(healthLevel)
+
+    /** Focus (PER): completed focus sessions pay a bigger bonus. */
+    fun focusBonusPercent(focusLevel: Int): Int = bonusPercent(focusLevel)
+
+    /**
+     * Movement (AGI): raises the ceiling on the streak bonus, so consistency
+     * pays off more the more you invest in it.
+     */
+    fun streakBonusCapPercent(movementLevel: Int): Int =
+        (20 + (movementLevel - 1) * 5).coerceIn(20, 100)
+
+    /** Streaks add +2% XP per consecutive day, up to the Movement-raised cap. */
+    fun streakBonusPercent(streakDays: Int, movementLevel: Int): Int =
+        (streakDays * 2).coerceIn(0, streakBonusCapPercent(movementLevel))
+
+    private fun applyPercent(base: Int, percent: Int): Int =
+        (base * (1 + percent / 100.0)).roundToInt()
+
+    /**
+     * Full XP calculation for a completion, folding in the Mind bonus, the
+     * streak bonus, and any active class perk.
+     */
+    fun finalXp(
+        baseXp: Int,
+        mindLevel: Int,
+        streakDays: Int,
+        movementLevel: Int,
+        classXpBonusPercent: Int = 0,
+    ): Int {
+        val total = xpBonusPercent(mindLevel) +
+            streakBonusPercent(streakDays, movementLevel) +
+            classXpBonusPercent
+        return applyPercent(baseXp, total).coerceAtLeast(1)
+    }
+
+    fun finalGold(baseGold: Int, bodyLevel: Int, classGoldBonusPercent: Int = 0): Int =
+        applyPercent(baseGold, goldBonusPercent(bodyLevel) + classGoldBonusPercent).coerceAtLeast(1)
+
+    fun finalPenalty(basePenalty: Int, healthLevel: Int, classPenaltyResistPercent: Int = 0): Int {
+        val resist = (penaltyResistPercent(healthLevel) + classPenaltyResistPercent).coerceIn(0, 90)
+        return (basePenalty * (1 - resist / 100.0)).roundToInt().coerceAtLeast(1)
+    }
+
+    fun finalFocusBonus(baseBonus: Int, focusLevel: Int, classFocusBonusPercent: Int = 0): Int =
+        applyPercent(baseBonus, focusBonusPercent(focusLevel) + classFocusBonusPercent).coerceAtLeast(1)
+
+    /** One-line description of what a stat currently does, for the Stats screen. */
+    fun describeEffect(stat: Stat, level: Int): String = when (stat) {
+        Stat.INT -> "+${xpBonusPercent(level)}% XP from every habit"
+        Stat.STR -> "+${goldBonusPercent(level)}% Gold from every habit"
+        Stat.VIT -> "−${penaltyResistPercent(level)}% XP lost to penalties"
+        Stat.PER -> "+${focusBonusPercent(level)}% bonus from focus sessions"
+        Stat.AGI -> "Streak bonus caps at +${streakBonusCapPercent(level)}% XP"
+    }
+}
+
+
+==============================================================================
+  END OF 02-DOMAIN-GAME-LOGIC.txt
+==============================================================================

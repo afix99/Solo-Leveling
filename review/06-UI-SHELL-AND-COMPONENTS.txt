@@ -1,0 +1,1172 @@
+==============================================================================
+  ASCEND — UI SHELL — NAVIGATION, THEME AND SHARED COMPONENTS
+  10 files
+==============================================================================
+
+AscendApp.kt is the navigation graph and app shell. It uses a Column rather
+than a Scaffold so the custom dock reserves its own space, and applies
+statusBarsPadding() at the root because the app draws edge-to-edge.
+
+Note ViewModelUtils.kt: viewModel() scopes per NavBackStackEntry, so two
+screens in the same feature get different ViewModel instances. That caused a
+real bug (settings saved on one screen were invisible to the other) and is
+why some state is read straight from the repository rather than cached in
+init.
+
+Material 3 is used as a primitive layer only — the visible chrome (SystemDock,
+SystemWindow, GlassCard) is custom.
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/ui/AscendApp.kt
+  LINES: 171
+==============================================================================
+
+package com.ascend.app.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.Equalizer
+import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Storefront
+import androidx.compose.material.icons.filled.TaskAlt
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavDestination.Companion.hierarchy
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import com.ascend.app.data.repo.AscendRepository
+import com.ascend.app.domain.Leveling
+import com.ascend.app.ui.components.DockItem
+import com.ascend.app.ui.components.SystemDock
+import com.ascend.app.ui.screens.achievements.AchievementsScreen
+import com.ascend.app.ui.screens.coach.ChatScreen
+import com.ascend.app.ui.screens.coach.CoachScreen
+import com.ascend.app.ui.screens.coach.CoachSetupScreen
+import com.ascend.app.ui.screens.habits.HabitsScreen
+import com.ascend.app.ui.screens.help.HowItWorksScreen
+import com.ascend.app.ui.screens.liestruths.LieTruthScreen
+import com.ascend.app.ui.screens.onboarding.OnboardingScreen
+import com.ascend.app.ui.screens.profile.ProfileScreen
+import com.ascend.app.ui.screens.shop.ShopScreen
+import com.ascend.app.ui.screens.stats.StatsScreen
+import com.ascend.app.ui.screens.system.SystemScreen
+import com.ascend.app.ui.screens.today.TodayScreen
+import com.ascend.app.ui.screens.weeklyreview.WeeklyReviewScreen
+import com.ascend.app.ui.theme.AscendColors
+
+private sealed class Dest(val route: String, val label: String, val icon: ImageVector) {
+    data object Today : Dest("today", "Today", Icons.Default.TaskAlt)
+    data object System : Dest("system", "System", Icons.Default.Equalizer)
+    data object Habits : Dest("habits", "Habits", Icons.Default.Checklist)
+    data object Coach : Dest("coach", "Coach", Icons.Default.AutoAwesome)
+    data object Shop : Dest("shop", "Shop", Icons.Default.Storefront)
+    data object Profile : Dest("profile", "More", Icons.Default.MoreHoriz)
+}
+
+private val bottomTabs = listOf(Dest.Today, Dest.System, Dest.Habits, Dest.Coach, Dest.Profile)
+private const val ROUTE_LIES_TRUTHS = "lies_truths"
+private const val ROUTE_HOW_IT_WORKS = "how_it_works"
+private const val ROUTE_WEEKLY_REVIEW = "weekly_review"
+private const val ROUTE_ACHIEVEMENTS = "achievements"
+private const val ROUTE_STATS = "stats"
+private const val ROUTE_COACH_SETUP = "coach_setup"
+private const val ROUTE_CHAT = "coach_chat"
+private const val ROUTE_SHOP = "shop"
+
+@Composable
+fun AscendApp(repository: AscendRepository) {
+    val hunterProfile by repository.observeHunterProfile().collectAsStateWithLifecycle(initialValue = null)
+    // Onboarding writes onboardingComplete=true at the very end; remembering
+    // that locally avoids a one-frame flash back to onboarding while the DB
+    // write is still propagating through the Flow.
+    var onboardedThisSession by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AscendColors.Background)
+            .statusBarsPadding(),
+        contentAlignment = Alignment.Center,
+    ) {
+        val profile = hunterProfile
+        when {
+            // First launch, before the profile row is written. Showing the
+            // wordmark rather than nothing, so this never reads as a dead app.
+            profile == null -> Text(
+                "ASCEND",
+                color = AscendColors.AccentBlue,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 28.sp,
+                letterSpacing = 4.sp,
+            )
+            profile.onboardingComplete || onboardedThisSession -> MainScaffold(repository)
+            else -> OnboardingScreen(repository = repository, onComplete = { onboardedThisSession = true })
+        }
+    }
+}
+
+@Composable
+private fun MainScaffold(repository: AscendRepository) {
+    val navController = rememberNavController()
+    val backStackEntry by navController.currentBackStackEntryAsState()
+    val currentDestination = backStackEntry?.destination
+    val selectedRoute = bottomTabs.firstOrNull { dest ->
+        currentDestination?.hierarchy?.any { it.route == dest.route } == true
+    }?.route
+
+    // Laid out as a Column rather than a Scaffold so the dock reserves its own
+    // space — content can never end up hidden underneath it. statusBarsPadding
+    // keeps the header clear of the clock and battery icons.
+    Column(modifier = Modifier.fillMaxSize().background(AscendColors.Background)) {
+        Box(modifier = Modifier.weight(1f).fillMaxSize()) {
+            NavHost(navController = navController, startDestination = Dest.Today.route) {
+                composable(Dest.Today.route) {
+                    TodayScreen(repository = repository, onOpenHabits = { navController.navigate(Dest.Habits.route) })
+                }
+                composable(Dest.System.route) { SystemScreen(repository = repository) }
+                composable(ROUTE_STATS) { StatsScreen(repository = repository) }
+                composable(Dest.Habits.route) { HabitsScreen(repository = repository) }
+                composable(Dest.Coach.route) {
+                    CoachScreen(
+                        repository = repository,
+                        onOpenSetup = { navController.navigate(ROUTE_COACH_SETUP) },
+                        onOpenChat = { navController.navigate(ROUTE_CHAT) },
+                    )
+                }
+                composable(ROUTE_CHAT) { ChatScreen(repository = repository) }
+                composable(ROUTE_COACH_SETUP) { CoachSetupScreen(repository = repository) }
+                composable(ROUTE_SHOP) { ShopScreen(repository = repository) }
+                composable(Dest.Profile.route) {
+                    ProfileScreen(
+                        repository = repository,
+                        onOpenLiesTruths = { navController.navigate(ROUTE_LIES_TRUTHS) },
+                        onOpenHowItWorks = { navController.navigate(ROUTE_HOW_IT_WORKS) },
+                        onOpenWeeklyReview = { navController.navigate(ROUTE_WEEKLY_REVIEW) },
+                        onOpenAchievements = { navController.navigate(ROUTE_ACHIEVEMENTS) },
+                        onOpenStats = { navController.navigate(ROUTE_STATS) },
+                        onOpenShop = { navController.navigate(ROUTE_SHOP) },
+                    )
+                }
+                composable(ROUTE_WEEKLY_REVIEW) { WeeklyReviewScreen(repository = repository) }
+                composable(ROUTE_LIES_TRUTHS) { LieTruthScreen(repository = repository) }
+                composable(ROUTE_HOW_IT_WORKS) { HowItWorksScreen() }
+                composable(ROUTE_ACHIEVEMENTS) {
+                    val totalXp by repository.observeTotalXp().collectAsStateWithLifecycle(initialValue = 0)
+                    AchievementsScreen(
+                        repository = repository,
+                        currentRank = Leveling.rankForTotalXp(totalXp),
+                    )
+                }
+            }
+        }
+
+        SystemDock(
+            items = bottomTabs.map { DockItem(route = it.route, label = it.label, icon = it.icon) },
+            selectedRoute = selectedRoute,
+            onSelect = { route ->
+                navController.navigate(route) {
+                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                    launchSingleTop = true
+                    restoreState = true
+                }
+            },
+        )
+    }
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/ui/ViewModelUtils.kt
+  LINES: 12
+==============================================================================
+
+package com.ascend.app.ui
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+
+/** Tiny factory for ViewModels that just need a constructor argument (our
+ * [com.ascend.app.data.repo.AscendRepository]) — avoids pulling in a full DI
+ * framework for a single-user, backend-free app. */
+class SimpleViewModelFactory(private val creator: () -> ViewModel) : ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>): T = creator() as T
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/ui/components/Components.kt
+  LINES: 148
+==============================================================================
+
+package com.ascend.app.ui.components
+
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import com.ascend.app.ui.theme.AscendColors
+import com.ascend.app.ui.theme.LabelEyebrow
+
+/**
+ * Shared card surface: soft, slightly translucent, subtle border — the
+ * "glass-blur, not skeuomorphic" surface referenced throughout the design.
+ */
+@Composable
+fun GlassCard(
+    modifier: Modifier = Modifier,
+    accent: Color = AscendColors.Divider,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(AscendColors.Surface)
+            .border(1.dp, accent.copy(alpha = 0.25f), RoundedCornerShape(20.dp))
+            .padding(18.dp),
+        content = content,
+    )
+}
+
+/** Section label — small caps, wide tracking, dim — used above every group of content. */
+@Composable
+fun Eyebrow(text: String, color: Color = AscendColors.TextSecondary, modifier: Modifier = Modifier) {
+    Text(text = text.uppercase(), style = LabelEyebrow, color = color, modifier = modifier)
+}
+
+/** Animated horizontal XP/progress bar with a soft glow-capable accent color. */
+@Composable
+fun ProgressBar(
+    progress: Float,
+    modifier: Modifier = Modifier,
+    trackColor: Color = AscendColors.SurfaceElevated2,
+    fillColor: Color = AscendColors.AccentBlue,
+    height: Dp = 8.dp,
+) {
+    val animated by animateFloatAsState(
+        targetValue = progress.coerceIn(0f, 1f),
+        animationSpec = tween(600),
+        label = "progress",
+    )
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(height)
+            .clip(RoundedCornerShape(50))
+            .background(trackColor),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(animated.coerceIn(0.02f, 1f))
+                .height(height)
+                .clip(RoundedCornerShape(50))
+                .background(
+                    Brush.horizontalGradient(listOf(fillColor.copy(alpha = 0.7f), fillColor)),
+                ),
+        )
+    }
+}
+
+/** Circular XP ring with centered content — used for the Hunter level display. */
+@Composable
+fun CircularProgressRing(
+    progress: Float,
+    modifier: Modifier = Modifier,
+    diameter: Dp = 148.dp,
+    strokeWidth: Dp = 12.dp,
+    trackColor: Color = AscendColors.SurfaceElevated2,
+    progressColor: Color = AscendColors.AccentBlue,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    val animated by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = progress.coerceIn(0f, 1f),
+        animationSpec = androidx.compose.animation.core.tween(700),
+        label = "ring-progress",
+    )
+    Box(modifier = modifier.size(diameter), contentAlignment = Alignment.Center) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val stroke = Stroke(width = strokeWidth.toPx(), cap = StrokeCap.Round)
+            drawArc(
+                color = trackColor,
+                startAngle = -90f,
+                sweepAngle = 360f,
+                useCenter = false,
+                style = stroke,
+            )
+            drawArc(
+                color = progressColor,
+                startAngle = -90f,
+                sweepAngle = 360f * animated,
+                useCenter = false,
+                style = stroke,
+            )
+        }
+        content()
+    }
+}
+
+/** Small rounded pill, used for rank badges / tags. */
+@Composable
+fun Pill(
+    text: String,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(color.copy(alpha = 0.16f))
+            .border(1.dp, color.copy(alpha = 0.5f), RoundedCornerShape(50))
+            .padding(horizontal = 12.dp, vertical = 5.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text = text, style = LabelEyebrow, color = color)
+    }
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/ui/components/HabitFormFields.kt
+  LINES: 149
+==============================================================================
+
+package com.ascend.app.ui.components
+
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.ascend.app.domain.Stat
+import com.ascend.app.ui.theme.AscendColors
+import com.ascend.app.ui.theme.color
+
+/**
+ * The full "create/edit a habit" field set — name, stat, non-negotiable
+ * toggle, and optional Focus Session settings. Shared by Onboarding step 3
+ * and the Habits screen's add/edit sheet so both stay in sync.
+ */
+@Composable
+fun HabitFormFields(
+    name: String,
+    onNameChange: (String) -> Unit,
+    stat: Stat,
+    onStatChange: (Stat) -> Unit,
+    isNonNegotiable: Boolean,
+    onNonNegotiableChange: (Boolean) -> Unit,
+    isFocusEnabled: Boolean,
+    onFocusEnabledChange: (Boolean) -> Unit,
+    targetMinutes: Int,
+    onTargetMinutesChange: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        OutlinedTextField(
+            value = name,
+            onValueChange = onNameChange,
+            label = { Text("Habit name") },
+            placeholder = { Text("e.g. Cold shower") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = fieldColors(),
+        )
+
+        Column {
+            Eyebrow("Which stat does this build?")
+            Spacer(Modifier.height(8.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+            ) {
+                Stat.entries.forEach { s ->
+                    FilterChip(
+                        selected = stat == s,
+                        onClick = { onStatChange(s) },
+                        label = { Text(s.plainName, fontSize = 12.sp) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = s.color().copy(alpha = 0.22f),
+                            selectedLabelColor = s.color(),
+                            containerColor = AscendColors.SurfaceElevated,
+                            labelColor = AscendColors.TextSecondary,
+                        ),
+                    )
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(stat.description, color = AscendColors.TextTertiary, fontSize = 11.sp)
+        }
+
+        ToggleRow(
+            title = "Non-negotiable",
+            subtitle = "Missing it costs XP and queues a Penalty Quest",
+            checked = isNonNegotiable,
+            onCheckedChange = onNonNegotiableChange,
+        )
+
+        ToggleRow(
+            title = "Enable Focus Session",
+            subtitle = "Launch a full-screen timer for this habit",
+            checked = isFocusEnabled,
+            onCheckedChange = onFocusEnabledChange,
+        )
+
+        if (isFocusEnabled) {
+            Column {
+                Eyebrow("Target duration: $targetMinutes min")
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(10, 20, 30, 45, 60).forEach { minutes ->
+                        FilterChip(
+                            selected = targetMinutes == minutes,
+                            onClick = { onTargetMinutesChange(minutes) },
+                            label = { Text("${minutes}m", fontSize = 12.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = AscendColors.AccentBlue.copy(alpha = 0.22f),
+                                selectedLabelColor = AscendColors.AccentBlue,
+                                containerColor = AscendColors.SurfaceElevated,
+                                labelColor = AscendColors.TextSecondary,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToggleRow(title: String, subtitle: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = AscendColors.TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+            Text(subtitle, color = AscendColors.TextTertiary, fontSize = 12.sp)
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(checkedTrackColor = AscendColors.AccentBlue),
+        )
+    }
+}
+
+@Composable
+private fun fieldColors() = TextFieldDefaults.colors(
+    focusedContainerColor = AscendColors.SurfaceElevated,
+    unfocusedContainerColor = AscendColors.SurfaceElevated,
+    focusedTextColor = AscendColors.TextPrimary,
+    unfocusedTextColor = AscendColors.TextPrimary,
+    focusedLabelColor = AscendColors.AccentBlue,
+    unfocusedLabelColor = AscendColors.TextSecondary,
+    focusedIndicatorColor = AscendColors.AccentBlue,
+    unfocusedIndicatorColor = AscendColors.Divider,
+    cursorColor = AscendColors.AccentBlue,
+)
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/ui/components/SystemDock.kt
+  LINES: 164
+==============================================================================
+
+package com.ascend.app.ui.components
+
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CutCornerShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.ascend.app.ui.theme.AscendColors
+
+data class DockItem(
+    val route: String,
+    val label: String,
+    val icon: ImageVector,
+)
+
+/**
+ * Replaces the stock Material navigation bar, which looked like every other
+ * app's. This is a floating cut-corner panel matching the System window
+ * language: angular corners, a hairline accent border, and a glowing marker
+ * that sits *above* the active item rather than a filled pill behind it.
+ */
+@Composable
+fun SystemDock(
+    items: List<DockItem>,
+    selectedRoute: String?,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = CutCornerShape(topStart = 18.dp, topEnd = 4.dp, bottomEnd = 18.dp, bottomStart = 4.dp)
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            AscendColors.SurfaceElevated,
+                            AscendColors.Surface,
+                        ),
+                    ),
+                )
+                .border(1.dp, AscendColors.AccentBlue.copy(alpha = 0.22f), shape)
+                .padding(vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            items.forEach { item ->
+                DockTab(
+                    item = item,
+                    selected = item.route == selectedRoute,
+                    onClick = { onSelect(item.route) },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DockTab(
+    item: DockItem,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val tint by animateColorAsState(
+        targetValue = if (selected) AscendColors.AccentBlue else AscendColors.TextTertiary,
+        animationSpec = tween(220),
+        label = "dock-tint",
+    )
+    val markerAlpha by animateFloatAsState(
+        targetValue = if (selected) 1f else 0f,
+        animationSpec = tween(220),
+        label = "dock-marker",
+    )
+    val iconScale by animateFloatAsState(
+        targetValue = if (selected) 1f else 0.9f,
+        animationSpec = tween(220),
+        label = "dock-scale",
+    )
+
+    Column(
+        modifier = modifier
+            .selectable(
+                selected = selected,
+                interactionSource = interaction,
+                // No ripple — the marker and tint carry the state, and a
+                // rectangular ripple would fight the angular panel.
+                indication = null,
+                onClick = onClick,
+            )
+            .padding(vertical = 2.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        // Glowing marker above the active tab.
+        Box(
+            modifier = Modifier
+                .alpha(markerAlpha)
+                .width(20.dp)
+                .height(2.dp)
+                .clip(RoundedCornerShape(50))
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(
+                            AscendColors.AccentBlue.copy(alpha = 0.1f),
+                            AscendColors.AccentBlue,
+                            AscendColors.AccentBlue.copy(alpha = 0.1f),
+                        ),
+                    ),
+                ),
+        )
+        Spacer(Modifier.height(7.dp))
+        Icon(
+            imageVector = item.icon,
+            contentDescription = item.label,
+            tint = tint,
+            modifier = Modifier.size(21.dp).scale(iconScale),
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = item.label.uppercase(),
+            color = tint,
+            fontSize = 9.sp,
+            letterSpacing = 0.9.sp,
+        )
+    }
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/ui/components/SystemWindow.kt
+  LINES: 203
+==============================================================================
+
+package com.ascend.app.ui.components
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CutCornerShape
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.ascend.app.ui.theme.AscendColors
+import com.ascend.app.ui.theme.LabelEyebrow
+
+/** One announcement to show in the System window. */
+data class SystemMessage(
+    val heading: String,
+    val title: String,
+    val body: String? = null,
+    val lines: List<String> = emptyList(),
+    val accent: Color = AscendColors.AccentBlue,
+    val confirmLabel: String = "Confirm",
+)
+
+/**
+ * The manhwa's blue notification window — cut corners, glowing border, all-caps
+ * heading. This is the app's signature visual moment, used for level-ups,
+ * rank-ups, quest arrivals and achievement unlocks.
+ */
+@Composable
+fun SystemWindow(
+    message: SystemMessage,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val infinite = rememberInfiniteTransition(label = "system-glow")
+    val glow by infinite.animateFloat(
+        initialValue = 0.45f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1500, easing = LinearEasing), RepeatMode.Reverse),
+        label = "glow-alpha",
+    )
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.85f))
+            .clickable(onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        AnimatedVisibility(
+            visible = true,
+            enter = fadeIn(tween(220)) + scaleIn(tween(280), initialScale = 0.9f),
+            exit = fadeOut(tween(180)) + scaleOut(tween(180), targetScale = 0.95f),
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(horizontal = 28.dp)
+                    .clip(CutCornerShape(topStart = 18.dp, bottomEnd = 18.dp))
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                message.accent.copy(alpha = 0.16f),
+                                AscendColors.Surface.copy(alpha = 0.97f),
+                            ),
+                        ),
+                    )
+                    .border(
+                        width = 1.5.dp,
+                        color = message.accent.copy(alpha = glow),
+                        shape = CutCornerShape(topStart = 18.dp, bottomEnd = 18.dp),
+                    )
+                    .padding(horizontal = 24.dp, vertical = 26.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    "[ ${message.heading.uppercase()} ]",
+                    style = LabelEyebrow,
+                    color = message.accent.copy(alpha = 0.9f),
+                )
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    message.title,
+                    color = AscendColors.TextPrimary,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    textAlign = TextAlign.Center,
+                )
+
+                message.body?.let {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        it,
+                        color = AscendColors.TextSecondary,
+                        fontSize = 14.sp,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 20.sp,
+                    )
+                }
+
+                if (message.lines.isNotEmpty()) {
+                    Spacer(Modifier.height(16.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(message.accent.copy(alpha = 0.3f)),
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    message.lines.forEach { line ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                            horizontalArrangement = Arrangement.Center,
+                        ) {
+                            Text(
+                                line,
+                                color = message.accent,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                textAlign = TextAlign.Center,
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(22.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(CutCornerShape(topStart = 8.dp, bottomEnd = 8.dp))
+                        .background(message.accent.copy(alpha = 0.18f))
+                        .border(
+                            1.dp,
+                            message.accent.copy(alpha = 0.6f),
+                            CutCornerShape(topStart = 8.dp, bottomEnd = 8.dp),
+                        )
+                        .clickable(onClick = onDismiss)
+                        .padding(horizontal = 28.dp, vertical = 10.dp),
+                ) {
+                    Text(
+                        message.confirmLabel,
+                        color = message.accent,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** A compact inline version used for the Daily Quest card on Today. */
+@Composable
+fun SystemPanel(
+    accent: Color = AscendColors.AccentBlue,
+    modifier: Modifier = Modifier,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .clip(CutCornerShape(topStart = 14.dp, bottomEnd = 14.dp))
+            .background(
+                Brush.verticalGradient(
+                    listOf(accent.copy(alpha = 0.14f), AscendColors.Surface),
+                ),
+            )
+            .border(
+                1.dp,
+                accent.copy(alpha = 0.45f),
+                CutCornerShape(topStart = 14.dp, bottomEnd = 14.dp),
+            )
+            .padding(16.dp),
+        content = content,
+    )
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/ui/theme/Color.kt
+  LINES: 46
+==============================================================================
+
+package com.ascend.app.ui.theme
+
+import androidx.compose.ui.graphics.Color
+
+/**
+ * ASCEND "System Window" palette.
+ *
+ * One dark theme only (v1). Deliberately restrained: a single blue accent for
+ * everyday progress, violet reserved for rank-up moments, amber for penalties/
+ * warnings. Everything else is near-black/gray to keep focus on the numbers.
+ */
+object AscendColors {
+    val Background = Color(0xFF0A0B0F)
+    val Surface = Color(0xFF14161D)
+    val SurfaceElevated = Color(0xFF1C1F29)
+    val SurfaceElevated2 = Color(0xFF262A36)
+    val Divider = Color(0xFF23262F)
+
+    val AccentBlue = Color(0xFF4C8DFF)
+    val AccentBlueDim = Color(0xFF2E5AA8)
+    val AccentViolet = Color(0xFF8B5CF6)
+    val AccentVioletDim = Color(0xFF5A3AA6)
+    val Amber = Color(0xFFF5A623)
+    val AmberDim = Color(0xFF8A5E14)
+    val Success = Color(0xFF34D399)
+    val Danger = Color(0xFFEF4444)
+
+    val TextPrimary = Color(0xFFF2F3F5)
+    val TextSecondary = Color(0xFF9AA0AC)
+    val TextTertiary = Color(0xFF5C616D)
+
+    // Stat identity colors — used consistently for stat badges/bars/charts.
+    val StatStr = Color(0xFFEF6A5B) // physical / body
+    val StatVit = Color(0xFF34D399) // health / maintenance
+    val StatInt = Color(0xFF4C8DFF) // learning / deep work
+    val StatPer = Color(0xFF8B5CF6) // mindfulness / awareness
+    val StatAgi = Color(0xFFF5C74A) // momentum / consistency
+
+    // Hunter rank colors, E -> S.
+    val RankE = Color(0xFF9AA0AC)
+    val RankD = Color(0xFF5EC2E8)
+    val RankC = Color(0xFF34D399)
+    val RankB = Color(0xFF4C8DFF)
+    val RankA = Color(0xFF8B5CF6)
+    val RankS = Color(0xFFF5C74A)
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/ui/theme/StatRankUi.kt
+  LINES: 24
+==============================================================================
+
+package com.ascend.app.ui.theme
+
+import androidx.compose.ui.graphics.Color
+import com.ascend.app.domain.Rank
+import com.ascend.app.domain.Stat
+
+/** UI-layer color mapping for domain enums — keeps [Stat]/[Rank] themselves
+ * free of any Compose dependency. */
+fun Stat.color(): Color = when (this) {
+    Stat.STR -> AscendColors.StatStr
+    Stat.VIT -> AscendColors.StatVit
+    Stat.INT -> AscendColors.StatInt
+    Stat.PER -> AscendColors.StatPer
+    Stat.AGI -> AscendColors.StatAgi
+}
+
+fun Rank.color(): Color = when (this) {
+    Rank.E -> AscendColors.RankE
+    Rank.D -> AscendColors.RankD
+    Rank.C -> AscendColors.RankC
+    Rank.B -> AscendColors.RankB
+    Rank.A -> AscendColors.RankA
+    Rank.S -> AscendColors.RankS
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/ui/theme/Theme.kt
+  LINES: 54
+==============================================================================
+
+package com.ascend.app.ui.theme
+
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
+
+/**
+ * ASCEND ships one dark "System Window" theme in v1 — see design spec §6.
+ * [isSystemInDarkTheme] is intentionally ignored; the app looks the same
+ * regardless of the device's light/dark setting.
+ */
+private val AscendDarkColorScheme = darkColorScheme(
+    primary = AscendColors.AccentBlue,
+    onPrimary = AscendColors.TextPrimary,
+    secondary = AscendColors.AccentViolet,
+    onSecondary = AscendColors.TextPrimary,
+    tertiary = AscendColors.Amber,
+    onTertiary = AscendColors.Background,
+    background = AscendColors.Background,
+    onBackground = AscendColors.TextPrimary,
+    surface = AscendColors.Surface,
+    onSurface = AscendColors.TextPrimary,
+    surfaceVariant = AscendColors.SurfaceElevated,
+    onSurfaceVariant = AscendColors.TextSecondary,
+    outline = AscendColors.Divider,
+    error = AscendColors.Danger,
+    onError = AscendColors.TextPrimary,
+)
+
+@Composable
+fun AscendTheme(content: @Composable () -> Unit) {
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        val window = (view.context as? android.app.Activity)?.window
+        if (window != null) {
+            window.statusBarColor = AscendColors.Background.toArgb()
+            window.navigationBarColor = AscendColors.Background.toArgb()
+            WindowCompat.getInsetsController(window, view).apply {
+                isAppearanceLightStatusBars = false
+                isAppearanceLightNavigationBars = false
+            }
+        }
+    }
+
+    MaterialTheme(
+        colorScheme = AscendDarkColorScheme,
+        typography = AscendTypography,
+        content = content,
+    )
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/ui/theme/Type.kt
+  LINES: 109
+==============================================================================
+
+package com.ascend.app.ui.theme
+
+import androidx.compose.material3.Typography
+import androidx.compose.ui.text.ExperimentalTextApi
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
+import com.ascend.app.R
+
+/**
+ * Inter (variable font, OFL-licensed) — a clean, geometric, Apple-Health-esque
+ * face that reads well at both huge numeral sizes (level/XP) and small dense
+ * labels. Single font file, weight pulled via variation settings.
+ */
+@OptIn(ExperimentalTextApi::class)
+private fun interWeight(weight: Int) = Font(
+    resId = R.font.inter_variable,
+    weight = FontWeight(weight),
+    variationSettings = FontVariation.Settings(FontVariation.weight(weight)),
+)
+
+val InterFamily = FontFamily(
+    interWeight(400),
+    interWeight(500),
+    interWeight(600),
+    interWeight(700),
+    interWeight(800),
+)
+
+/** Extra-wide letter-spacing label style used for eyebrow/section headers. */
+val LabelEyebrow = TextStyle(
+    fontFamily = InterFamily,
+    fontWeight = FontWeight(600),
+    fontSize = 12.sp,
+    letterSpacing = 0.18.em,
+)
+
+/** Huge numeral style for level/XP/stat displays. */
+val DisplayNumeral = TextStyle(
+    fontFamily = InterFamily,
+    fontWeight = FontWeight(800),
+    fontSize = 56.sp,
+    letterSpacing = (-0.02).em,
+)
+
+val AscendTypography = Typography(
+    displayLarge = TextStyle(
+        fontFamily = InterFamily,
+        fontWeight = FontWeight(800),
+        fontSize = 40.sp,
+        letterSpacing = (-0.02).em,
+    ),
+    headlineLarge = TextStyle(
+        fontFamily = InterFamily,
+        fontWeight = FontWeight(700),
+        fontSize = 28.sp,
+        letterSpacing = (-0.01).em,
+    ),
+    headlineMedium = TextStyle(
+        fontFamily = InterFamily,
+        fontWeight = FontWeight(700),
+        fontSize = 22.sp,
+    ),
+    titleLarge = TextStyle(
+        fontFamily = InterFamily,
+        fontWeight = FontWeight(600),
+        fontSize = 18.sp,
+    ),
+    titleMedium = TextStyle(
+        fontFamily = InterFamily,
+        fontWeight = FontWeight(600),
+        fontSize = 16.sp,
+    ),
+    bodyLarge = TextStyle(
+        fontFamily = InterFamily,
+        fontWeight = FontWeight(400),
+        fontSize = 16.sp,
+        lineHeight = 22.sp,
+    ),
+    bodyMedium = TextStyle(
+        fontFamily = InterFamily,
+        fontWeight = FontWeight(400),
+        fontSize = 14.sp,
+        lineHeight = 20.sp,
+    ),
+    bodySmall = TextStyle(
+        fontFamily = InterFamily,
+        fontWeight = FontWeight(400),
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+    ),
+    labelLarge = TextStyle(
+        fontFamily = InterFamily,
+        fontWeight = FontWeight(600),
+        fontSize = 14.sp,
+        letterSpacing = 0.02.em,
+    ),
+    labelMedium = LabelEyebrow,
+    labelSmall = TextStyle(
+        fontFamily = InterFamily,
+        fontWeight = FontWeight(600),
+        fontSize = 11.sp,
+        letterSpacing = 0.1.em,
+    ),
+)
+
+
+==============================================================================
+  END OF 06-UI-SHELL-AND-COMPONENTS.txt
+==============================================================================

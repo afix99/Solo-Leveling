@@ -1,0 +1,247 @@
+==============================================================================
+  ASCEND — REVIEW BRIEF
+  Read this first. The remaining files contain the full source.
+==============================================================================
+
+WHAT THIS IS
+------------
+A native Android habit-tracking app that fuses a discipline journal with an
+RPG progression system modelled on progression-fantasy "System" fiction
+(Solo Leveling and similar). Single user, offline-first, no backend, no
+accounts. Distributed as a sideloaded APK, not on any store.
+
+Current version 5.0 (versionCode 13). ~12,100 lines of Kotlin across 66 main
+source files plus 9 test files. 129 unit tests passing.
+
+
+STACK
+-----
+Kotlin, Jetpack Compose (Material 3, heavily re-themed), Room (SQLite),
+WorkManager, Navigation-Compose. minSdk 26, targetSdk 34, AGP 8.7.0,
+Kotlin 2.0.21, Compose BOM 2024.10.01.
+
+Deliberately no DI framework, no OkHttp/Retrofit, no JSON serialization
+library. The only network code uses HttpURLConnection and the platform's
+org.json. This was a scope decision for a single-user offline app, not an
+oversight — but it is a fair thing to challenge.
+
+
+ARCHITECTURE
+------------
+    Compose screen
+        |  StateFlow / events
+    ViewModel
+        |  suspend calls + Flow
+    AscendRepository  --uses-->  domain/  (pure Kotlin, no Android imports)
+        |
+    Room DAOs --> SQLite (on device)
+
+    WorkManager Workers --> AscendRepository   (same seam, never a DAO)
+
+Key structural rules the code follows:
+- AscendRepository is the single seam. ViewModels and Workers both go through
+  it; neither touches a DAO directly.
+- Everything in domain/ is pure Kotlin with no Android dependencies, which is
+  why the game rules are unit-testable in isolation. All 129 tests are on
+  domain/ and data/ai/. There are no UI tests.
+- HunterLoadout bundles every payout modifier (stat levels, allocated points,
+  skills, shadows, class) into one value, so effect calculations resolve in
+  one place instead of each system adding another parameter.
+
+
+THE GAME SYSTEMS (what to evaluate for balance/design)
+------------------------------------------------------
+1. STATS — 5 stats (Body/Health/Mind/Focus/Movement, shown with RPG labels
+   STR/VIT/INT/PER/AGI). Each habit is tagged to one. Each stat has a real
+   mechanical effect, not cosmetic:
+     Mind     -> +XP per completion
+     Body     -> +Gold per completion
+     Health   -> reduces XP lost to penalties
+     Focus    -> larger focus-session bonus
+     Movement -> raises the cap on the streak bonus
+   Curve: level = floor(sqrt(xp/50)) + 1. Effects: 3% per level, capped 60%.
+
+2. LEVELS & RANKS — Hunter Level derived from total XP at 1/8 scale so it
+   lags any single maxed stat. Ranks E/D/C/B/A/S at levels 1/5/10/20/35/55.
+
+3. PENALTIES — Missing a non-negotiable at midnight costs XP, floored at the
+   current level's XP threshold so a level already earned can't be lost. A
+   1.5x-XP "Penalty Quest" is queued for the next day, capped at one per habit.
+
+4. ECONOMY — Gold earned per completion, spent in a Shop on user-defined
+   real-world rewards.
+
+5. CHOICE LAYER (the depth mechanics)
+   - Stat points: 3 per level, allocated manually. Respec costs 250 gold.
+   - Skills: 9 across 3 tiers. Each rewrites an existing rule (streak
+     survival, penalty size, quest payout, gold rate) rather than adding a
+     parallel system.
+   - Shadows: redeeming a Penalty Quest extracts a Shadow tied to that habit,
+     granting a permanent capped stat bonus. Failure becomes an asset.
+   - Gates: opt-in staked N-day challenges. Clear for a multiplied payout,
+     miss a day and the stake is forfeit.
+
+6. DAILY QUEST — one bonus quest per day, seeded by date so it's stable
+   within a day and varies between days.
+
+7. ACHIEVEMENTS & TITLES — 21 achievements paying gold, 8 equippable titles.
+
+
+DESIGN CONSTRAINTS I DELIBERATELY IMPOSED
+------------------------------------------
+These were conscious choices. If you disagree, say so — but know they were
+decisions, not accidents.
+
+- Depth over complexity. Research on game design is explicit that depth comes
+  from few mechanics that interact, not many stacked side by side. The four
+  choice systems above were added specifically because they modify existing
+  rules and each other, rather than being parallel features.
+
+- Bounded loss-aversion. Gamification research shows scarcity and loss
+  aversion ("black hat" motivation) produce compulsion rather than habits.
+  So: Gates are opt-in with fixed stakes and no expiry, penalties can never
+  drop you below an earned level, penalty quests never stack beyond one, and
+  ignoring the entire meta layer costs nothing.
+
+- Behavioural-science features, each tied to a specific paper:
+    Flow theory (Csikszentmihalyi 1990)   -> Focus Sessions, notifications
+                                             muted during them
+    Deliberate practice (Ericsson 1993)   -> post-session difficulty rating,
+                                             target-raise suggestion
+    Self-efficacy (Bandura 1977)          -> Evidence Log: auto-generated
+                                             proof events, NOT user-authored
+                                             affirmations
+    Cognitive load (Sweller 1988)         -> Today screen collapses optional
+                                             habits until non-negotiables done
+    Yerkes-Dodson (1908)                  -> recalibration nudge after 3+
+                                             misses in a rolling week
+
+
+AI COACH (the only networked feature)
+--------------------------------------
+Optional. Inert until the user supplies their own API key — none ships with
+the app. Provider-agnostic across OpenRouter, DeepSeek, Groq (OpenAI-shaped)
+and Google Gemini (native API).
+
+- Reads real logged data (completion rates, streaks, stat levels, focus
+  minutes, 30-day miss counts) and asks for specific advice.
+- 12 report types plus a multi-turn chat that receives the same data context.
+- Optional in-character "System voice" persona, with hard prompt limits: it
+  may never invent numbers it wasn't given, and usefulness outranks staying
+  in character. Tests assert the safety rules survive the persona.
+- Safety guardrails in every prompt: calorie floors (1500/1200), max ~1%
+  bodyweight/week deficit, never train through injury, no diagnosis, no
+  supplement pushing beyond well-established basics.
+- Auto-recovery: if a model 404s, the app fetches the provider's model list,
+  picks a usable chat model, retries, and saves what worked.
+
+
+KNOWN LIMITATIONS AND WEAK POINTS — PLEASE SCRUTINISE THESE
+------------------------------------------------------------
+I am listing these so the review isn't spent rediscovering them.
+
+1. NEVER RUN ON A DEVICE BY THE AUTHOR. The build environment had no
+   emulator. Everything is verified by compilation and unit tests only. All
+   UI behaviour, all Room migrations, and the entire network path are
+   unverified by execution. The user has confirmed the app runs and the AI
+   coach works, but no systematic device testing has happened.
+
+2. NO UI TESTS AT ALL. 129 tests, all on domain/ and data/ai/. Zero Compose
+   UI tests, zero instrumented tests, zero Room migration tests. Room
+   migration tests in particular are a real gap — there are four migrations
+   (v1->v5) and none is tested.
+
+3. API KEY STORED UNENCRYPTED in Room, in app-private storage. Sandboxed on
+   a non-rooted device but not encrypted at rest. The UI warns about this.
+   EncryptedSharedPreferences was considered and skipped.
+
+4. GAME BALANCE IS UNTUNED BY PLAY. Every constant (XP rates, gold rates,
+   3%/level stat effects, 60% caps, gate stakes and multipliers, skill costs)
+   was chosen by reasoning, not playtesting. Economy balance in particular is
+   guesswork — whether gold accrues too fast or too slow relative to reward
+   prices is unknown.
+
+5. SINGLE-USER ASSUMPTIONS THROUGHOUT. Singleton profile row, no sync, no
+   backup beyond a JSON export, no multi-device story.
+
+6. DATE/TIME HANDLING uses LocalDate.now() and the device timezone
+   throughout. Behaviour across timezone changes, DST, or travel is
+   unconsidered.
+
+7. THE MIDNIGHT ROLLOVER depends on WorkManager firing. If the OS defers it
+   (Doze, battery optimisation, force-stop), penalties and gate progress may
+   be late or skipped. There is a lastEvaluatedDate guard against
+   double-counting but no catch-up for missed days.
+
+8. NO ERROR REPORTING OR ANALYTICS of any kind, by design. Crashes are
+   invisible to the author.
+
+9. FILE SIZES. AscendRepository is ~900 lines and growing; it is the single
+   seam by design but is a plausible candidate for splitting. Some Compose
+   screens are long.
+
+10. ACCESSIBILITY largely unaddressed. Content descriptions exist on some
+    icons but there has been no systematic pass. Colour contrast unverified.
+    Dark theme only — no light mode.
+
+
+WHAT WOULD BE MOST USEFUL FROM A REVIEW
+----------------------------------------
+In rough priority order:
+
+1. Correctness bugs in the game logic — especially anything that lets a user
+   farm XP/gold unintentionally, or any state that can get stuck.
+2. Room migration correctness (v1->v2->v3->v4->v5). These have never been run
+   against a populated database.
+3. Coroutine/lifecycle issues in the ViewModels, particularly anything that
+   could leak, double-fire, or race on rapid taps.
+4. Game balance: are the progression curves and economy sensible?
+5. Whether the "depth from interacting mechanics" claim actually holds, or
+   whether the systems are more parallel than I think.
+6. Security review of the AI networking path.
+7. Anything about the behavioural design that is likely to be
+   counterproductive for real habit formation.
+
+
+FILE INDEX
+----------
+Every source file in the project appears in exactly one bundle — 91 files
+total, nothing omitted and nothing duplicated. Each bundle opens with a short
+note on what to look for in it, then the files, each under a banner giving its
+full repository path and line count:
+
+    ==============================================================================
+      FILE:  app/src/main/java/com/ascend/app/domain/HunterLoadout.kt
+      LINES: 214
+    ==============================================================================
+
+Use those paths when reporting findings so they can be located exactly.
+
+                                   files    size
+01-ENTRY-AND-CONFIG.txt              18     19 KB   Manifest, Application,
+                                                    Activity, Gradle, resources
+02-DOMAIN-GAME-LOGIC.txt             14     51 KB   All game rules (pure
+                                                    Kotlin, fully unit-tested)
+03-DATABASE-LAYER.txt                 4     31 KB   Entities, DAOs, database,
+                                                    all 4 migrations
+04-REPOSITORY.txt                     1     38 KB   The single data/logic seam
+05-AI-COACH.txt                       3     43 KB   Client, providers, prompts
+06-UI-SHELL-AND-COMPONENTS.txt       10     44 KB   Navigation, theme, shared
+                                                    components
+07-UI-SCREENS.txt                    17    207 KB   All screen composables
+08-VIEWMODELS.txt                    10     34 KB   All state holders
+09-BACKGROUND-SERVICES.txt            5     12 KB   WorkManager jobs,
+                                                    notifications
+10-TESTS.txt                          9     48 KB   All 129 unit tests
+
+If you can only read part of this, the highest-value order is:
+02 (game rules) -> 04 (repository) -> 03 (migrations) -> 05 (networking).
+Those four are ~156 KB and contain essentially all of the logic. 07 is the
+largest bundle but the least dense — it is layout code.
+
+
+A NOTE ON WHAT IS NOT HERE
+--------------------------
+No API keys, credentials or personal data are included. The AI coach ships
+with no key; the user supplies their own at runtime and it is stored only on
+their device. Test fixtures that look like keys are synthetic.

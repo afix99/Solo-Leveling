@@ -1,0 +1,974 @@
+==============================================================================
+  ASCEND — AI COACH — HTTP CLIENT, PROVIDER DETECTION, PROMPT CONSTRUCTION
+  3 files
+==============================================================================
+
+The only networked code in the app. Raw HttpURLConnection and platform
+org.json; no Retrofit, no serialization library.
+
+AiClient.kt — request/response for both OpenAI-shaped chat completions and
+Gemini's native generateContent. extractErrorMessage() handles errors arriving
+as either a JSON object or a JSON array; the array case was a real bug that
+silently swallowed Google's error text for several debugging rounds.
+completeAutoRecovering() handles a 404 on the configured model by fetching the
+provider's live model list, picking a usable one, retrying and saving it.
+
+CoachPrompts.kt — the safety guardrails (calorie floors, deficit ceiling,
+injury and diagnosis rules) are constants folded into every system prompt,
+including when the in-character "System voice" persona is enabled. Tests
+assert the persona cannot displace them.
+
+The key is supplied by the user, stored in Room, and sent only to the provider
+the user chose. Nothing else leaves the device. Security review of this path
+is priority 6 in the brief.
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/data/ai/AiClient.kt
+  LINES: 498
+==============================================================================
+
+package com.ascend.app.data.ai
+
+import java.io.BufferedReader
+import java.net.HttpURLConnection
+import java.net.URL
+import javax.net.ssl.HttpsURLConnection
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+
+sealed interface AiResult {
+    data class Success(val text: String) : AiResult
+    data class Failure(val message: String) : AiResult
+}
+
+sealed interface ModelListResult {
+    data class Success(val models: List<String>) : ModelListResult
+    data class Failure(val message: String) : ModelListResult
+}
+
+/**
+ * Minimal OpenAI-compatible chat client.
+ *
+ * Deliberately built on HttpURLConnection and org.json — both are in the
+ * Android platform — so adding an AI feature doesn't drag OkHttp, Retrofit and
+ * a serialization library into an app that otherwise makes no network calls.
+ */
+class AiClient {
+
+    suspend fun complete(
+        provider: AiProvider,
+        apiKey: String,
+        model: String,
+        systemPrompt: String,
+        userPrompt: String,
+        timeoutMillis: Int = 60_000,
+    ): AiResult = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) {
+            return@withContext AiResult.Failure("No API key set. Add one in Coach → Setup.")
+        }
+
+        val resolvedModel = model.ifBlank { provider.defaultModel }
+        val url = if (provider.isNativeGemini) {
+            "${provider.endpoint}/$resolvedModel:generateContent"
+        } else {
+            provider.endpoint
+        }
+
+        var connection: HttpURLConnection? = null
+        try {
+            connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = timeoutMillis
+                readTimeout = timeoutMillis
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+                if (provider.isNativeGemini) {
+                    setRequestProperty("x-goog-api-key", apiKey)
+                } else {
+                    setRequestProperty("Authorization", "Bearer $apiKey")
+                }
+                if (provider == AiProvider.OPENROUTER) {
+                    // OpenRouter attributes traffic by these; harmless elsewhere.
+                    setRequestProperty("HTTP-Referer", "https://github.com/afix99/Solo-Leveling")
+                    setRequestProperty("X-Title", "ASCEND")
+                }
+            }
+
+            // Refuse to send anything over a downgraded connection.
+            if (connection !is HttpsURLConnection) {
+                return@withContext AiResult.Failure("Refusing to send data over a non-HTTPS connection.")
+            }
+
+            val body = if (provider.isNativeGemini) {
+                JSONObject().apply {
+                    put(
+                        "contents",
+                        JSONArray().put(
+                            JSONObject().put(
+                                "parts",
+                                JSONArray().put(JSONObject().put("text", userPrompt)),
+                            ),
+                        ),
+                    )
+                    put(
+                        "systemInstruction",
+                        JSONObject().put(
+                            "parts",
+                            JSONArray().put(JSONObject().put("text", systemPrompt)),
+                        ),
+                    )
+                    put("generationConfig", JSONObject().put("temperature", 0.7))
+                }.toString()
+            } else {
+                JSONObject().apply {
+                    put("model", resolvedModel)
+                    put("temperature", 0.7)
+                    put(
+                        "messages",
+                        JSONArray().apply {
+                            put(JSONObject().put("role", "system").put("content", systemPrompt))
+                            put(JSONObject().put("role", "user").put("content", userPrompt))
+                        },
+                    )
+                }.toString()
+            }
+
+            connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            val response = stream?.bufferedReader()?.use(BufferedReader::readText).orEmpty()
+
+            if (code !in 200..299) {
+                return@withContext AiResult.Failure(describeError(code, response))
+            }
+
+            val text = parseContent(response, provider.isNativeGemini)
+                ?: return@withContext AiResult.Failure(
+                    "The provider returned a response I couldn't read.\n\n" +
+                        response.take(300),
+                )
+            AiResult.Success(text.trim())
+        } catch (e: java.net.UnknownHostException) {
+            AiResult.Failure("No internet connection.")
+        } catch (e: java.net.SocketTimeoutException) {
+            AiResult.Failure("The request timed out. Free tiers can be slow — try again.")
+        } catch (e: Exception) {
+            AiResult.Failure(e.message ?: "Request failed.")
+        } finally {
+            connection?.disconnect()
+        }
+    }
+
+    /** A completion plus the model that actually worked, which may not be the
+     * one asked for if auto-recovery kicked in. */
+    data class ResolvedCompletion(val result: AiResult, val modelUsed: String)
+
+    /** One turn of a conversation. Role is "user" or "assistant". */
+    data class ChatTurn(val role: String, val content: String)
+
+    /**
+     * Multi-turn chat. Prior turns are replayed so follow-ups like "why?" or
+     * "make it easier" resolve against what was already said.
+     */
+    suspend fun chat(
+        provider: AiProvider,
+        apiKey: String,
+        model: String,
+        systemPrompt: String,
+        history: List<ChatTurn>,
+        timeoutMillis: Int = 60_000,
+    ): AiResult = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) {
+            return@withContext AiResult.Failure("No API key set. Add one in Coach → Setup.")
+        }
+        if (history.isEmpty()) {
+            return@withContext AiResult.Failure("Nothing to send.")
+        }
+
+        val resolvedModel = model.ifBlank { provider.defaultModel }
+        val url = if (provider.isNativeGemini) {
+            "${provider.endpoint}/$resolvedModel:generateContent"
+        } else {
+            provider.endpoint
+        }
+
+        var connection: HttpURLConnection? = null
+        try {
+            connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = timeoutMillis
+                readTimeout = timeoutMillis
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+                if (provider.isNativeGemini) {
+                    setRequestProperty("x-goog-api-key", apiKey)
+                } else {
+                    setRequestProperty("Authorization", "Bearer $apiKey")
+                }
+                if (provider == AiProvider.OPENROUTER) {
+                    setRequestProperty("HTTP-Referer", "https://github.com/afix99/Solo-Leveling")
+                    setRequestProperty("X-Title", "ASCEND")
+                }
+            }
+
+            val body = if (provider.isNativeGemini) {
+                JSONObject().apply {
+                    put(
+                        "contents",
+                        JSONArray().apply {
+                            history.forEach { turn ->
+                                put(
+                                    JSONObject()
+                                        // Gemini calls the assistant "model".
+                                        .put("role", if (turn.role == "assistant") "model" else "user")
+                                        .put(
+                                            "parts",
+                                            JSONArray().put(JSONObject().put("text", turn.content)),
+                                        ),
+                                )
+                            }
+                        },
+                    )
+                    put(
+                        "systemInstruction",
+                        JSONObject().put(
+                            "parts",
+                            JSONArray().put(JSONObject().put("text", systemPrompt)),
+                        ),
+                    )
+                    put("generationConfig", JSONObject().put("temperature", 0.7))
+                }.toString()
+            } else {
+                JSONObject().apply {
+                    put("model", resolvedModel)
+                    put("temperature", 0.7)
+                    put(
+                        "messages",
+                        JSONArray().apply {
+                            put(JSONObject().put("role", "system").put("content", systemPrompt))
+                            history.forEach {
+                                put(JSONObject().put("role", it.role).put("content", it.content))
+                            }
+                        },
+                    )
+                }.toString()
+            }
+
+            connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            val response = stream?.bufferedReader()?.use(BufferedReader::readText).orEmpty()
+
+            if (code !in 200..299) {
+                return@withContext AiResult.Failure(describeError(code, response))
+            }
+
+            val text = parseContent(response, provider.isNativeGemini)
+                ?: return@withContext AiResult.Failure(
+                    "Couldn't read the reply.\n\n" + response.take(300),
+                )
+            AiResult.Success(text.trim())
+        } catch (e: java.net.UnknownHostException) {
+            AiResult.Failure("No internet connection.")
+        } catch (e: java.net.SocketTimeoutException) {
+            AiResult.Failure("The request timed out. Free tiers can be slow — try again.")
+        } catch (e: Exception) {
+            AiResult.Failure(e.message ?: "Request failed.")
+        } finally {
+            connection?.disconnect()
+        }
+    }
+
+    /**
+     * Runs a completion and, if the model turns out to be unavailable, finds one
+     * that works and retries once.
+     *
+     * Provider catalogues change constantly and model availability varies by
+     * account and region, so a hardcoded default will eventually 404 for
+     * somebody. Making the user hunt for a valid model id is the wrong answer —
+     * the app can just ask the provider and pick one.
+     */
+    suspend fun completeAutoRecovering(
+        provider: AiProvider,
+        apiKey: String,
+        model: String,
+        systemPrompt: String,
+        userPrompt: String,
+    ): ResolvedCompletion {
+        val first = complete(provider, apiKey, model, systemPrompt, userPrompt)
+        if (first is AiResult.Success) return ResolvedCompletion(first, model)
+
+        val failure = first as AiResult.Failure
+        if (!isModelProblem(failure.message)) return ResolvedCompletion(first, model)
+
+        // Every branch below reports what recovery actually did. Returning the
+        // original error made a failed retry indistinguishable from no retry,
+        // which hid the real cause through several rounds of debugging.
+        val listed = listModels(provider, apiKey)
+        if (listed !is ModelListResult.Success) {
+            val why = (listed as ModelListResult.Failure).message
+            return ResolvedCompletion(
+                AiResult.Failure("${failure.message}\n\nCouldn't list alternatives: $why"),
+                model,
+            )
+        }
+
+        val replacement = pickBestModel(provider, listed.models, exclude = model)
+            ?: return ResolvedCompletion(
+                AiResult.Failure(
+                    "${failure.message}\n\nNo usable chat model found among " +
+                        "${listed.models.size} offered by this key.",
+                ),
+                model,
+            )
+
+        return when (val second = complete(provider, apiKey, replacement, systemPrompt, userPrompt)) {
+            is AiResult.Success -> ResolvedCompletion(second, replacement)
+            is AiResult.Failure -> ResolvedCompletion(
+                AiResult.Failure(
+                    "Tried $model, then $replacement. Both failed.\n\n" +
+                        "First: ${failure.message}\n\nSecond: ${second.message}",
+                ),
+                replacement,
+            )
+        }
+    }
+
+    /**
+     * Picks a sensible chat model from whatever the provider offers. Filters out
+     * things that can't answer a chat prompt at all (embeddings, image, audio),
+     * then prefers small/fast/free variants.
+     */
+    fun pickBestModel(provider: AiProvider, available: List<String>, exclude: String? = null): String? {
+        val unusable = listOf(
+            "embed", "embedding", "tts", "whisper", "imagen", "veo", "aqa",
+            "guard", "moderation", "rerank", "vision-only", "image-generation",
+        )
+        val candidates = available
+            .filter { it != exclude }
+            .filterNot { id -> unusable.any { id.lowercase().contains(it) } }
+        if (candidates.isEmpty()) return null
+
+        fun score(id: String): Int {
+            val lower = id.lowercase()
+            var s = 0
+            // Free tiers first — this app is built around costing nothing.
+            if (provider == AiProvider.OPENROUTER && lower.endsWith(":free")) s += 100
+            if (lower.contains("flash")) s += 40
+            if (lower.contains("instant") || lower.contains("mini") || lower.contains("lite")) s += 20
+            if (lower.contains("chat") || lower.contains("instruct") || lower.contains("versatile")) s += 15
+            if (lower.contains("latest")) s += 10
+            // Preview and experimental builds are likelier to disappear.
+            if (lower.contains("preview") || lower.contains("exp")) s -= 25
+            if (lower.contains("thinking") || lower.contains("reasoner")) s -= 10
+            return s
+        }
+        return candidates.maxByOrNull { score(it) }
+    }
+
+    /**
+     * Asks the provider which models this key can actually call.
+     *
+     * Hardcoded model ids don't survive contact with reality — catalogues turn
+     * over every few weeks, and a stale id surfaces as a baffling 404. Fetching
+     * the list means the picker always offers something that works.
+     */
+    suspend fun listModels(
+        provider: AiProvider,
+        apiKey: String,
+        timeoutMillis: Int = 30_000,
+    ): ModelListResult = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) {
+            return@withContext ModelListResult.Failure("Save your API key first.")
+        }
+
+        var connection: HttpURLConnection? = null
+        try {
+            val listUrl = if (provider.isNativeGemini) {
+                "${provider.modelsEndpoint}?pageSize=200"
+            } else {
+                provider.modelsEndpoint
+            }
+            connection = (URL(listUrl).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = timeoutMillis
+                readTimeout = timeoutMillis
+                if (provider.isNativeGemini) {
+                    setRequestProperty("x-goog-api-key", apiKey)
+                } else {
+                    setRequestProperty("Authorization", "Bearer $apiKey")
+                }
+            }
+
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            val response = stream?.bufferedReader()?.use(BufferedReader::readText).orEmpty()
+
+            if (code !in 200..299) {
+                return@withContext ModelListResult.Failure(describeError(code, response))
+            }
+
+            val json = JSONObject(response)
+            // OpenAI shape is {"data":[{"id":...}]}; Gemini's native shape is
+            // {"models":[{"name":"models/..."}]}. Accept either.
+            val array = json.optJSONArray("data")
+                ?: json.optJSONArray("models")
+                ?: return@withContext ModelListResult.Failure("Unexpected response from provider.")
+
+            val ids = buildList {
+                for (i in 0 until array.length()) {
+                    val item = array.optJSONObject(i) ?: continue
+
+                    // Google reports what each model can do, so models that
+                    // can't generate text are excluded on fact rather than by
+                    // guessing from the name.
+                    if (provider.isNativeGemini) {
+                        val methods = item.optJSONArray("supportedGenerationMethods")
+                        val supportsGeneration = (0 until (methods?.length() ?: 0))
+                            .any { methods?.optString(it) == "generateContent" }
+                        if (!supportsGeneration) continue
+                    }
+
+                    val id = item.optString("id").ifBlank { item.optString("name") }
+                    if (id.isNotBlank()) add(id.removePrefix("models/"))
+                }
+            }.distinct().sorted()
+
+            if (ids.isEmpty()) {
+                ModelListResult.Failure("The provider returned no models for this key.")
+            } else {
+                ModelListResult.Success(ids)
+            }
+        } catch (e: java.net.UnknownHostException) {
+            ModelListResult.Failure("No internet connection.")
+        } catch (e: Exception) {
+            ModelListResult.Failure(e.message ?: "Could not load models.")
+        } finally {
+            connection?.disconnect()
+        }
+    }
+
+    private fun parseContent(response: String, nativeGemini: Boolean): String? = runCatching {
+        if (nativeGemini) {
+            JSONObject(response)
+                .getJSONArray("candidates")
+                .getJSONObject(0)
+                .getJSONObject("content")
+                .getJSONArray("parts")
+                .getJSONObject(0)
+                .getString("text")
+        } else {
+            JSONObject(response)
+                .getJSONArray("choices")
+                .getJSONObject(0)
+                .getJSONObject("message")
+                .getString("content")
+        }
+    }.getOrNull()
+
+    /** Turns provider error bodies into something a user can act on. */
+    internal fun describeError(code: Int, body: String): String {
+        val detail = extractErrorMessage(body)
+
+        // The provider's own message is always appended when present — swallowing
+        // it cost several rounds of guessing at what "not found" actually meant.
+        val friendly = when (code) {
+            400 -> "The provider rejected the request (HTTP 400)."
+            401, 403 -> "Key rejected (HTTP $code). Check it's correct and still active."
+            402 -> "This model needs credit on your account. Try a free model instead."
+            404 -> "That model isn't available to your key (HTTP 404)."
+            429 -> "Rate limited. Free tiers cap requests — wait a moment and retry."
+            in 500..599 -> "The provider is having problems (HTTP $code). Try again shortly."
+            else -> "Request failed (HTTP $code)."
+        }
+        return if (detail.isNullOrBlank()) friendly else "$friendly\n\n$detail"
+    }
+
+    /**
+     * Pulls the provider's own explanation out of an error body.
+     *
+     * Google's compatibility endpoint wraps errors in a JSON *array*, which the
+     * previous object-only parse threw on — so the real reason was silently
+     * discarded and every failure showed a generic summary. Both shapes are
+     * handled now, and the raw body is used as a last resort rather than
+     * showing nothing.
+     */
+    internal fun extractErrorMessage(body: String): String? {
+        if (body.isBlank()) return null
+
+        runCatching {
+            val message = JSONObject(body).optJSONObject("error")?.optString("message")
+            if (!message.isNullOrBlank()) return message
+        }
+        runCatching {
+            val array = JSONArray(body)
+            for (i in 0 until array.length()) {
+                val message = array.optJSONObject(i)?.optJSONObject("error")?.optString("message")
+                if (!message.isNullOrBlank()) return message
+            }
+        }
+        // Unparseable — a truncated raw body still beats hiding the reason.
+        return body.trim().take(300).takeIf { it.isNotBlank() }
+    }
+
+    /** True when a failure looks like the model id was the problem, not the key. */
+    fun isModelProblem(message: String): Boolean {
+        val m = message.lowercase()
+        return m.contains("404") ||
+            m.contains("not found") ||
+            m.contains("does not exist") ||
+            m.contains("not supported") ||
+            m.contains("no endpoints found")
+    }
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/data/ai/AiProvider.kt
+  LINES: 105
+==============================================================================
+
+package com.ascend.app.data.ai
+
+/**
+ * Every provider here speaks the OpenAI chat-completions shape, which is why
+ * one client covers all of them. Gemini is included via Google's
+ * OpenAI-compatible endpoint rather than its native API for the same reason.
+ *
+ * No key is bundled with the app — the user supplies their own, and it never
+ * leaves the device except as an Authorization header to the provider they
+ * chose.
+ */
+enum class AiProvider(
+    val displayName: String,
+    val endpoint: String,
+    val defaultModel: String,
+    val signupUrl: String,
+    val notes: String,
+    /** How this provider's keys begin, used to catch a key pasted under the
+     * wrong provider before it fails with a confusing 401. */
+    val keyPrefixes: List<String>,
+    /** Offered as chips so a model ID never has to be typed by hand. These are
+     * only a starting suggestion — catalogues change constantly, so the real
+     * list is fetched from the provider with the user's key. */
+    val commonModels: List<String>,
+    /** Models endpoint, used to replace the suggestions above with what this
+     * specific key can actually call. */
+    val modelsEndpoint: String,
+    /**
+     * Google is talked to through its own API rather than its OpenAI
+     * compatibility shim. The shim returns error bodies in a different shape
+     * and its model routing differs from the documented API, which cost
+     * several rounds of debugging. The native API also reports which models
+     * support text generation, so a usable one can be chosen reliably.
+     */
+    val isNativeGemini: Boolean = false,
+) {
+    OPENROUTER(
+        displayName = "OpenRouter",
+        endpoint = "https://openrouter.ai/api/v1/chat/completions",
+        defaultModel = "deepseek/deepseek-chat-v3-0324:free",
+        signupUrl = "https://openrouter.ai/keys",
+        notes = "Free tier, many models behind one key. Models ending in :free cost nothing.",
+        keyPrefixes = listOf("sk-or-"),
+        commonModels = listOf(
+            "deepseek/deepseek-chat-v3-0324:free",
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "google/gemma-3-27b-it:free",
+            "qwen/qwen3-235b-a22b:free",
+        ),
+        modelsEndpoint = "https://openrouter.ai/api/v1/models",
+    ),
+    DEEPSEEK(
+        displayName = "DeepSeek",
+        endpoint = "https://api.deepseek.com/chat/completions",
+        defaultModel = "deepseek-chat",
+        signupUrl = "https://platform.deepseek.com/api_keys",
+        notes = "Very cheap rather than free. Needs credit on the account.",
+        keyPrefixes = listOf("sk-"),
+        commonModels = listOf("deepseek-chat", "deepseek-reasoner"),
+        modelsEndpoint = "https://api.deepseek.com/models",
+    ),
+    GROQ(
+        displayName = "Groq",
+        endpoint = "https://api.groq.com/openai/v1/chat/completions",
+        defaultModel = "llama-3.3-70b-versatile",
+        signupUrl = "https://console.groq.com/keys",
+        notes = "Free tier with generous daily limits. Fastest responses.",
+        keyPrefixes = listOf("gsk_"),
+        commonModels = listOf(
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "openai/gpt-oss-120b",
+        ),
+        modelsEndpoint = "https://api.groq.com/openai/v1/models",
+    ),
+    GEMINI(
+        displayName = "Google Gemini",
+        // Base path; the model id and :generateContent are appended per request.
+        endpoint = "https://generativelanguage.googleapis.com/v1beta/models",
+        defaultModel = "gemini-flash-latest",
+        signupUrl = "https://aistudio.google.com/apikey",
+        notes = "Free tier, no card needed. Key issued instantly from AI Studio.",
+        keyPrefixes = listOf("AIza", "AQ."),
+        commonModels = listOf("gemini-flash-latest", "gemini-2.5-flash", "gemini-2.0-flash"),
+        modelsEndpoint = "https://generativelanguage.googleapis.com/v1beta/models",
+        isNativeGemini = true,
+    ),
+    ;
+
+    fun looksLikeMyKey(key: String): Boolean =
+        keyPrefixes.any { key.trim().startsWith(it) }
+
+    companion object {
+        /**
+         * Best guess at which provider a key belongs to. DeepSeek's plain "sk-"
+         * is checked last because OpenRouter's "sk-or-" also starts with it.
+         */
+        fun detectFromKey(key: String): AiProvider? {
+            val trimmed = key.trim()
+            if (trimmed.isBlank()) return null
+            return entries.firstOrNull { it != DEEPSEEK && it.looksLikeMyKey(trimmed) }
+                ?: DEEPSEEK.takeIf { it.looksLikeMyKey(trimmed) }
+        }
+    }
+}
+
+
+==============================================================================
+  FILE:  app/src/main/java/com/ascend/app/data/ai/CoachPrompts.kt
+  LINES: 322
+==============================================================================
+
+package com.ascend.app.data.ai
+
+import com.ascend.app.domain.AdviceType
+import com.ascend.app.domain.AthleteProfile
+import com.ascend.app.domain.Rank
+import com.ascend.app.domain.Stat
+
+/** A snapshot of everything the coach is allowed to reason about. */
+data class CoachContext(
+    val hunterName: String,
+    val hunterLevel: Int,
+    val rank: Rank,
+    val statLevels: Map<Stat, Int>,
+    val habits: List<HabitSnapshot>,
+    val perfectDays: Int,
+    val longestStreak: Int,
+    val focusSessions: Int,
+    val focusMinutes: Int,
+    val missesLast30Days: Int,
+    val completionRateLast30: Int,
+    val athlete: AthleteProfile,
+)
+
+data class HabitSnapshot(
+    val name: String,
+    val stat: Stat,
+    val isNonNegotiable: Boolean,
+    val completionRate: Int,
+    val currentStreak: Int,
+    val focusMinutes: Int?,
+)
+
+object CoachPrompts {
+
+    /**
+     * Shared guardrails. Fitness and nutrition guidance is ordinary for a
+     * training app, but an LLM left unconstrained will happily prescribe crash
+     * deficits or train through injuries, so the boundaries are stated up front
+     * rather than hoped for.
+     */
+    private const val SAFETY = """
+Rules you must follow:
+- Give practical, specific, actionable guidance. No vague filler.
+- Never recommend a calorie intake below roughly 1500 kcal/day for men or 1200 for women, and never a deficit steeper than about 1% of bodyweight per week.
+- Never recommend training through pain or an injury. If injuries are mentioned, work around them and say to get them properly assessed.
+- Do not diagnose anything or give medical advice. If something sounds like a medical issue, say plainly that it needs a doctor.
+- Do not recommend supplements beyond well-established basics (creatine monohydrate, vitamin D, protein powder), and note these are optional.
+- If the user's data is thin, say what you'd need rather than inventing detail.
+"""
+
+    private const val STYLE = """
+Style:
+- Write in plain English. Short paragraphs, concrete numbers, no hype.
+- Use markdown headings and bullet points.
+- Keep it under roughly 500 words unless a schedule genuinely needs more.
+- Address the user directly as "you". Do not open with a greeting or a preamble.
+"""
+
+    /**
+     * The in-character voice, modelled on the System interface from the
+     * progression-fantasy genre: clipped, clinical, faintly ominous.
+     *
+     * The last two rules matter more than the rest. A persona that starts
+     * inventing stat numbers or replacing advice with flavour text would make
+     * the feature worse than plain prose, so the theatre is explicitly confined
+     * to headers and tone.
+     */
+    private const val SYSTEM_VOICE = """
+Voice — you are THE SYSTEM, an interface that has attached itself to this person:
+- Address them as "Hunter". Never use their name.
+- Be clipped and clinical. State facts without softening them. Do not flatter,
+  do not encourage, do not apologise.
+- Open with a bracketed announcement, e.g. [ANALYSIS COMPLETE] or
+  [DAILY QUEST ISSUED] or [WARNING].
+- You may use terms from the genre — Rank, Gate, Quest, Penalty Zone, Shadow,
+  Awakening — where they fit naturally.
+- Occasionally note consequences plainly, e.g. "Failure to comply will result in
+  a penalty." Do not overdo it.
+
+Hard limits on the persona:
+- Never invent stats, levels, ranks or numbers that were not given to you. If a
+  figure wasn't supplied, don't state one.
+- The advice underneath must be exactly as concrete and correct as it would be
+  without the persona. Flavour goes in the headers and tone only. If you ever
+  have to choose between sounding in-character and being useful, be useful.
+"""
+
+    fun styleFor(systemVoice: Boolean): String =
+        if (systemVoice) "$STYLE$SYSTEM_VOICE" else STYLE
+
+    fun systemPrompt(type: AdviceType, systemVoice: Boolean = false): String {
+        val role = when (type) {
+            AdviceType.TRAINING_PLAN ->
+                "You are an experienced strength coach writing a weekly training plan."
+            AdviceType.NUTRITION ->
+                "You are a sports nutrition coach writing an eating schedule for muscle growth."
+            AdviceType.SLEEP ->
+                "You are a recovery and sleep coach."
+            AdviceType.READING ->
+                "You are a learning-science tutor specialising in reading speed and retention."
+            AdviceType.DEEP_WORK ->
+                "You are a focus and attention coach grounded in the deep-work and flow literature."
+            AdviceType.HABIT_DESIGN ->
+                "You are a behaviour-design coach who builds habit systems from real adherence data."
+            AdviceType.DATA_REVIEW ->
+                "You are a performance analyst reviewing a person's habit-tracking data."
+            AdviceType.APPRAISAL ->
+                "You are a behaviour analyst dissecting why one specific habit keeps failing."
+            AdviceType.ASCENSION_PLAN ->
+                "You are a long-term performance planner building a 90-day progression roadmap."
+            AdviceType.GATE_DESIGN ->
+                "You design personalised challenges that target a specific weakness."
+            AdviceType.DEBRIEF ->
+                "You run blameless post-mortems on behavioural failures, the way an engineer would."
+            AdviceType.CLASS_ADVISOR ->
+                "You advise on character-build choices using real performance data."
+        }
+        return "$role\n$SAFETY\n${styleFor(systemVoice)}"
+    }
+
+    private fun buildPrompt(type: AdviceType, ctx: CoachContext): String = buildString {
+        appendLine("Here is my real data from my habit-tracking app. Base your answer on it.")
+        appendLine()
+        append(dataBlock(ctx))
+
+        if (type.needsAthleteProfile) {
+            appendLine("## About me")
+            if (ctx.athlete.isEmpty) {
+                appendLine("- I haven't filled in my body details. Ask me for what you need, and")
+                appendLine("  give the best general answer you can in the meantime.")
+            } else {
+                with(ctx.athlete) {
+                    age?.let { appendLine("- Age: $it") }
+                    sex?.takeIf { it.isNotBlank() }?.let { appendLine("- Sex: $it") }
+                    heightCm?.let { appendLine("- Height: ${it}cm") }
+                    weightKg?.let { appendLine("- Weight: ${it}kg") }
+                    goal?.takeIf { it.isNotBlank() }?.let { appendLine("- Goal: $it") }
+                    experience?.takeIf { it.isNotBlank() }?.let { appendLine("- Training experience: $it") }
+                    equipment?.takeIf { it.isNotBlank() }?.let { appendLine("- Equipment available: $it") }
+                    dietaryNotes?.takeIf { it.isNotBlank() }?.let { appendLine("- Dietary notes: $it") }
+                    injuries?.takeIf { it.isNotBlank() }?.let { appendLine("- Injuries / limitations: $it") }
+                }
+            }
+            appendLine()
+        }
+
+        appendLine("## What I want")
+        appendLine(task(type))
+    }
+
+    /** The shared data snapshot used by both reports and chat. */
+    private fun dataBlock(ctx: CoachContext): String = buildString {
+        appendLine("## Progression")
+        appendLine("- Level ${ctx.hunterLevel}, ${ctx.rank.displayName}")
+        ctx.statLevels.forEach { (stat, level) ->
+            appendLine("- ${stat.plainName} (${stat.description}): level $level")
+        }
+        appendLine()
+
+        appendLine("## Adherence")
+        appendLine("- Completion rate over the last 30 days: ${ctx.completionRateLast30}%")
+        appendLine("- Missed non-negotiables in the last 30 days: ${ctx.missesLast30Days}")
+        appendLine("- Perfect days all-time: ${ctx.perfectDays}")
+        appendLine("- Longest streak: ${ctx.longestStreak} days")
+        appendLine("- Focus sessions completed: ${ctx.focusSessions} (${ctx.focusMinutes} minutes total)")
+        appendLine()
+
+        appendLine("## My habits")
+        if (ctx.habits.isEmpty()) {
+            appendLine("- (none set up yet)")
+        } else {
+            ctx.habits.forEach { h ->
+                val kind = if (h.isNonNegotiable) "non-negotiable" else "optional"
+                val focus = h.focusMinutes?.let { ", ${it}min timed session" } ?: ""
+                appendLine(
+                    "- \"${h.name}\" — $kind, ${h.stat.plainName}, " +
+                        "${h.completionRate}% completed, ${h.currentStreak}-day streak$focus",
+                )
+            }
+        }
+        appendLine()
+
+    }
+
+    private fun task(type: AdviceType): String = when (type) {
+        AdviceType.DATA_REVIEW -> """
+            Review the data above and tell me:
+            1. What is genuinely working, with the numbers that show it.
+            2. The single biggest weakness, and why you picked it.
+            3. Three specific changes for the next two weeks.
+            Be blunt. If my adherence is poor, say so.
+        """.trimIndent()
+
+        AdviceType.TRAINING_PLAN -> """
+            Write me a weekly training plan for muscle growth.
+            Include the split by day, the exercises, sets, reps, and rough rest times.
+            Match it to the equipment I have and my experience level.
+            Say how to progress the load week to week.
+            Then tell me which habits I should add to this app to track it.
+        """.trimIndent()
+
+        AdviceType.NUTRITION -> """
+            Write me an eating schedule for muscle growth.
+            Give me a daily calorie target and a protein target in grams, and show
+            how you calculated them from my stats.
+            Lay out meal timing across the day, including around training.
+            Give example meals that fit my dietary notes.
+            Then tell me which habits I should add to this app to track it.
+        """.trimIndent()
+
+        AdviceType.READING -> """
+            Give me a concrete system for reading faster and retaining more.
+            Cover: how to choose what to read, an active-reading method, note-taking,
+            and a review schedule that actually fits spaced repetition.
+            Tie it to how much I currently read according to my data.
+        """.trimIndent()
+
+        AdviceType.DEEP_WORK -> """
+            Based on my focus session history, tell me how to extend my focus and
+            get more from each session. Cover session length progression, what to do
+            about distractions, and how to structure a working block.
+            Give me a target session length to aim for next.
+        """.trimIndent()
+
+        AdviceType.HABIT_DESIGN -> """
+            Audit my habit list. Tell me:
+            1. Which habits to cut, and why the data says so.
+            2. Which to keep but change (make easier, harder, or re-time).
+            3. What is missing given my goals, with specific habit names I can add.
+            Consider whether I have too many non-negotiables to sustain.
+        """.trimIndent()
+
+        AdviceType.SLEEP -> """
+            Give me a sleep and recovery plan. Cover a target sleep window, a
+            wind-down routine, and what to change given my current wake/sleep habits
+            and training load. Flag anything in my data that is likely hurting recovery.
+        """.trimIndent()
+
+        AdviceType.APPRAISAL -> """
+            Look at my habit list and identify the single weakest one — lowest
+            completion rate, or the streak that keeps resetting. Then dissect it:
+            1. Name the habit and state its numbers.
+            2. Give the three most likely reasons it keeps failing, ranked. Consider
+               that it may be too big, badly timed, poorly anchored, or not actually
+               something I want.
+            3. Give me a specific rewritten version of that habit that I could
+               realistically hold, including the exact wording to put in the app.
+            4. Say what to do this week to test the rewrite.
+            If the honest answer is that I should delete it, say so.
+        """.trimIndent()
+
+        AdviceType.ASCENSION_PLAN -> """
+            Build me a 90-day roadmap toward my next Rank.
+            Split it into three 30-day phases. For each phase give:
+            - The one thing to focus on, and why my data points there.
+            - Which stats it should move, and roughly how far.
+            - Two or three checkable milestones.
+            End with the single habit that will matter most across all 90 days.
+            Be realistic about pace given my current completion rate — do not
+            assume I suddenly become perfect.
+        """.trimIndent()
+
+        AdviceType.GATE_DESIGN -> """
+            Design a personal challenge — a "Gate" — aimed squarely at my weakest area.
+            Give it a name, a duration in days, and clear entry and clear-conditions.
+            State exactly what counts as clearing it and what counts as failing.
+            Make it hard enough to matter but genuinely achievable at my current
+            completion rate. Explain in one line why this challenge targets my
+            specific weakness rather than a generic one.
+        """.trimIndent()
+
+        AdviceType.DEBRIEF -> """
+            Run a blameless post-mortem on my failures.
+            Use my miss counts and streak data to work out when and how things break.
+            Cover:
+            1. The pattern — when do I fail, and what do those failures have in common?
+            2. The likely trigger or root cause, not the surface reason.
+            3. Two changes to the system so the same failure can't repeat.
+            4. One thing to do the very next time I miss a day, to stop one miss
+               becoming a collapse.
+            Be analytical, not moralising. I already know I missed.
+        """.trimIndent()
+
+        AdviceType.CLASS_ADVISOR -> """
+            I can choose one class, each with a permanent passive:
+            - Scholar: +20% XP from everything.
+            - Merchant: +35% Gold.
+            - Sentinel: -40% penalty damage when I miss a non-negotiable.
+            - Assassin: +50% bonus from completed focus sessions.
+            - Shadow Monarch: +10% to everything (endgame only).
+            Recommend one based on my actual data, and say plainly which numbers
+            drove the decision. Then name the runner-up and the case for it.
+            If my adherence is poor, weigh damage-reduction more heavily than gains.
+        """.trimIndent()
+    }
+
+    fun build(
+        type: AdviceType,
+        ctx: CoachContext,
+        systemVoice: Boolean = false,
+    ): Pair<String, String> = systemPrompt(type, systemVoice) to buildPrompt(type, ctx)
+
+    /**
+     * System prompt for free-form chat. The user's real data is embedded so
+     * questions like "why am I stalling?" can be answered from evidence rather
+     * than generalities.
+     */
+    fun chatSystemPrompt(ctx: CoachContext, systemVoice: Boolean): String = buildString {
+        appendLine(
+            "You are a performance coach with full access to this person's habit-tracking data. " +
+                "Answer their questions using that data wherever it's relevant.",
+        )
+        appendLine(SAFETY)
+        appendLine(styleFor(systemVoice))
+        appendLine()
+        appendLine("Keep chat replies shorter than a written report — a few hundred words at most,")
+        appendLine("unless they ask for something long. Answer the question actually asked.")
+        appendLine()
+        appendLine("Their current data:")
+        appendLine(dataBlock(ctx))
+    }
+}
+
+
+==============================================================================
+  END OF 05-AI-COACH.txt
+==============================================================================
