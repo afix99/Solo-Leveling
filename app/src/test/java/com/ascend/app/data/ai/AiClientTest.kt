@@ -164,7 +164,7 @@ class AiClientTest {
     @Test
     fun `detects provider from key prefix including Google's newer format`() {
         assertEquals(AiProvider.GEMINI, AiProvider.detectFromKey("AIzaSyExample"))
-        assertEquals(AiProvider.GEMINI, AiProvider.detectFromKey("AQ.Ab8RN6KSpVXaCZKn"))
+        assertEquals(AiProvider.GEMINI, AiProvider.detectFromKey("AQ.AbExampleKey"))
         assertEquals(AiProvider.OPENROUTER, AiProvider.detectFromKey("sk-or-v1-abc"))
         assertEquals(AiProvider.GROQ, AiProvider.detectFromKey("gsk_abc"))
         assertEquals(AiProvider.DEEPSEEK, AiProvider.detectFromKey("sk-abc123"))
