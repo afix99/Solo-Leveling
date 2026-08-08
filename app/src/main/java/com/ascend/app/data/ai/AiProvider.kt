@@ -18,8 +18,13 @@ enum class AiProvider(
     /** How this provider's keys begin, used to catch a key pasted under the
      * wrong provider before it fails with a confusing 401. */
     val keyPrefixes: List<String>,
-    /** Offered as chips so a model ID never has to be typed by hand. */
+    /** Offered as chips so a model ID never has to be typed by hand. These are
+     * only a starting suggestion — catalogues change constantly, so the real
+     * list is fetched from the provider with the user's key. */
     val commonModels: List<String>,
+    /** OpenAI-shaped models endpoint, used to replace the suggestions above
+     * with what this specific key can actually call. */
+    val modelsEndpoint: String,
 ) {
     OPENROUTER(
         displayName = "OpenRouter",
@@ -34,6 +39,7 @@ enum class AiProvider(
             "google/gemma-3-27b-it:free",
             "qwen/qwen3-235b-a22b:free",
         ),
+        modelsEndpoint = "https://openrouter.ai/api/v1/models",
     ),
     DEEPSEEK(
         displayName = "DeepSeek",
@@ -43,6 +49,7 @@ enum class AiProvider(
         notes = "Very cheap rather than free. Needs credit on the account.",
         keyPrefixes = listOf("sk-"),
         commonModels = listOf("deepseek-chat", "deepseek-reasoner"),
+        modelsEndpoint = "https://api.deepseek.com/models",
     ),
     GROQ(
         displayName = "Groq",
@@ -56,6 +63,7 @@ enum class AiProvider(
             "llama-3.1-8b-instant",
             "openai/gpt-oss-120b",
         ),
+        modelsEndpoint = "https://api.groq.com/openai/v1/models",
     ),
     GEMINI(
         displayName = "Google Gemini",
@@ -63,8 +71,9 @@ enum class AiProvider(
         defaultModel = "gemini-2.5-flash",
         signupUrl = "https://aistudio.google.com/apikey",
         notes = "Free tier, no card needed. Key issued instantly from AI Studio.",
-        keyPrefixes = listOf("AIza"),
+        keyPrefixes = listOf("AIza", "AQ."),
         commonModels = listOf("gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"),
+        modelsEndpoint = "https://generativelanguage.googleapis.com/v1beta/openai/models",
     ),
     ;
 

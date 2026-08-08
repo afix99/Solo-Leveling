@@ -9,6 +9,7 @@ import com.ascend.app.data.ai.AiClient
 import com.ascend.app.data.ai.AiProvider
 import com.ascend.app.data.ai.AiResult
 import com.ascend.app.data.ai.CoachPrompts
+import com.ascend.app.data.ai.ModelListResult
 import com.ascend.app.data.db.AiSettingsEntity
 import com.ascend.app.data.db.CoachAdviceEntity
 import com.ascend.app.data.repo.AscendRepository
@@ -61,6 +62,16 @@ class CoachViewModel(private val repository: AscendRepository) : ViewModel() {
         private set
 
     var testing by mutableStateOf(false)
+        private set
+
+    /** Models the saved key can actually call, fetched from the provider. */
+    var availableModels by mutableStateOf<List<String>>(emptyList())
+        private set
+
+    var loadingModels by mutableStateOf(false)
+        private set
+
+    var modelsMessage by mutableStateOf<String?>(null)
         private set
 
     fun saveSettings(updated: AiSettingsEntity) {
@@ -136,6 +147,35 @@ class CoachViewModel(private val repository: AscendRepository) : ViewModel() {
             }
             testing = false
         }
+    }
+
+    fun loadModels() {
+        if (loadingModels) return
+        viewModelScope.launch {
+            loadingModels = true
+            modelsMessage = null
+
+            val current = repository.getAiSettings()
+            val activeProvider = runCatching { AiProvider.valueOf(current.provider) }
+                .getOrDefault(AiProvider.OPENROUTER)
+
+            when (val result = client.listModels(activeProvider, current.apiKey)) {
+                is ModelListResult.Success -> {
+                    availableModels = result.models
+                    modelsMessage =
+                        "${result.models.size} models available on your ${activeProvider.displayName} key."
+                }
+                is ModelListResult.Failure -> {
+                    availableModels = emptyList()
+                    modelsMessage = result.message
+                }
+            }
+            loadingModels = false
+        }
+    }
+
+    fun clearModelsMessage() {
+        modelsMessage = null
     }
 
     fun deleteAdvice(id: Long) {

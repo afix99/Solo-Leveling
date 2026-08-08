@@ -64,7 +64,10 @@ fun CoachSetupScreen(repository: AscendRepository) {
         val stored = settings.model
         val current = runCatching { AiProvider.valueOf(settings.provider) }
             .getOrDefault(AiProvider.OPENROUTER)
-        mutableStateOf(if (stored in current.commonModels) stored else current.defaultModel)
+        // Only repair values that clearly aren't model ids (old builds allowed
+        // free text). A real id that's merely missing from the suggestions is kept.
+        val looksLikeModelId = stored.isNotBlank() && !stored.contains(" ")
+        mutableStateOf(if (looksLikeModelId) stored else current.defaultModel)
     }
 
     var age by remember(settings.age) { mutableStateOf(settings.age?.toString() ?: "") }
@@ -225,11 +228,48 @@ fun CoachSetupScreen(repository: AscendRepository) {
                     fontSize = 10.sp,
                 )
                 Spacer(Modifier.height(8.dp))
+
+                // Suggestions until the real catalogue is fetched; provider
+                // model lists change often enough that baked-in ids go stale.
+                val choices = vm.availableModels.ifEmpty { provider.commonModels }
                 ModelChips(
-                    provider = provider,
-                    selected = model.ifBlank { provider.defaultModel },
+                    models = choices,
+                    selected = model,
                     onSelect = { model = it },
                 )
+
+                Spacer(Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = { vm.loadModels() },
+                    enabled = !vm.loadingModels && settings.apiKey.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        if (vm.loadingModels) "Loading…" else "Load my models",
+                        color = AscendColors.AccentBlue,
+                        fontSize = 13.sp,
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    if (vm.availableModels.isEmpty()) {
+                        "Save your key, then load the exact models it can use. " +
+                            "The chips above are only suggestions and may be out of date."
+                    } else {
+                        "Showing the real models your key can call."
+                    },
+                    color = AscendColors.TextTertiary,
+                    fontSize = 10.sp,
+                )
+                vm.modelsMessage?.let { msg ->
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        msg,
+                        color = if (vm.availableModels.isEmpty()) AscendColors.Danger else AscendColors.Success,
+                        fontSize = 11.sp,
+                        modifier = Modifier.clickable { vm.clearModelsMessage() },
+                    )
+                }
             }
         }
 
@@ -372,12 +412,12 @@ fun CoachSetupScreen(repository: AscendRepository) {
  * from a list rather than typed. */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun ModelChips(provider: AiProvider, selected: String, onSelect: (String) -> Unit) {
+private fun ModelChips(models: List<String>, selected: String, onSelect: (String) -> Unit) {
     androidx.compose.foundation.layout.FlowRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        provider.commonModels.forEach { candidate ->
+        models.forEach { candidate ->
             FilterChip(
                 selected = selected == candidate,
                 onClick = { onSelect(candidate) },

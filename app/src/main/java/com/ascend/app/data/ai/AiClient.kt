@@ -14,6 +14,11 @@ sealed interface AiResult {
     data class Failure(val message: String) : AiResult
 }
 
+sealed interface ModelListResult {
+    data class Success(val models: List<String>) : ModelListResult
+    data class Failure(val message: String) : ModelListResult
+}
+
 /**
  * Minimal OpenAI-compatible chat client.
  *
@@ -92,6 +97,68 @@ class AiClient {
         }
     }
 
+    /**
+     * Asks the provider which models this key can actually call.
+     *
+     * Hardcoded model ids don't survive contact with reality — catalogues turn
+     * over every few weeks, and a stale id surfaces as a baffling 404. Fetching
+     * the list means the picker always offers something that works.
+     */
+    suspend fun listModels(
+        provider: AiProvider,
+        apiKey: String,
+        timeoutMillis: Int = 30_000,
+    ): ModelListResult = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) {
+            return@withContext ModelListResult.Failure("Save your API key first.")
+        }
+
+        var connection: HttpURLConnection? = null
+        try {
+            connection = (URL(provider.modelsEndpoint).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = timeoutMillis
+                readTimeout = timeoutMillis
+                setRequestProperty("Authorization", "Bearer $apiKey")
+            }
+
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            val response = stream?.bufferedReader()?.use(BufferedReader::readText).orEmpty()
+
+            if (code !in 200..299) {
+                return@withContext ModelListResult.Failure(describeError(code, response))
+            }
+
+            val json = JSONObject(response)
+            // OpenAI shape is {"data":[{"id":...}]}; Gemini's native shape is
+            // {"models":[{"name":"models/..."}]}. Accept either.
+            val array = json.optJSONArray("data")
+                ?: json.optJSONArray("models")
+                ?: return@withContext ModelListResult.Failure("Unexpected response from provider.")
+
+            val ids = buildList {
+                for (i in 0 until array.length()) {
+                    val item = array.optJSONObject(i) ?: continue
+                    val id = item.optString("id").ifBlank { item.optString("name") }
+                    if (id.isNotBlank()) add(id.removePrefix("models/"))
+                }
+            }.distinct().sorted()
+
+            if (ids.isEmpty()) {
+                ModelListResult.Failure("The provider returned no models for this key.")
+            } else {
+                ModelListResult.Success(ids)
+            }
+        } catch (e: java.net.UnknownHostException) {
+            ModelListResult.Failure("No internet connection.")
+        } catch (e: Exception) {
+            ModelListResult.Failure(e.message ?: "Could not load models.")
+        } finally {
+            connection?.disconnect()
+        }
+    }
+
     private fun parseContent(response: String): String? = runCatching {
         JSONObject(response)
             .getJSONArray("choices")
@@ -108,9 +175,12 @@ class AiClient {
         }.getOrNull()
 
         return when (code) {
+            400 -> detail ?: "The provider rejected the request (HTTP 400)."
             401, 403 -> "Key rejected (HTTP $code). Check it's correct and still active."
             402 -> "This model needs credit on your account. Try a free model instead."
-            404 -> "Model not found. Check the model name for this provider."
+            404 ->
+                "That model isn't available to your key. Tap \"Load my models\" in Setup " +
+                    "to see exactly which ones you can use."
             429 -> "Rate limited. Free tiers cap requests — wait a moment and retry."
             in 500..599 -> "The provider is having problems (HTTP $code). Try again shortly."
             else -> detail ?: "Request failed (HTTP $code)."
