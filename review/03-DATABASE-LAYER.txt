@@ -14,7 +14,7 @@ strings, timestamps as epoch millis.
 
 ==============================================================================
   FILE:  app/src/main/java/com/ascend/app/data/db/AscendDatabase.kt
-  LINES: 227
+  LINES: 246
 ==============================================================================
 
 package com.ascend.app.data.db
@@ -47,7 +47,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CoachAdviceEntity::class,
         ChatMessageEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -71,6 +71,9 @@ abstract class AscendDatabase : RoomDatabase() {
     abstract fun chatMessageDao(): ChatMessageDao
 
     companion object {
+        /** Mirrors the @Database version so other layers can record it. */
+        const val SCHEMA_VERSION = 6
+
         /**
          * v2 adds the economy layer: Gold, titles, classes, rewards,
          * achievements and daily quests. Written as a real migration rather
@@ -229,6 +232,22 @@ abstract class AscendDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Records how far the midnight rollover has actually got. Existing
+         * users start at null, which the catch-up treats as "only evaluate
+         * yesterday" — the old behaviour — so upgrading never retroactively
+         * penalises days that passed before this column existed.
+         */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN lastRolloverDate TEXT")
+                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN manaConvertedDate TEXT")
+                db.execSQL(
+                    "ALTER TABLE hunter_profile ADD COLUMN manaConvertedXpToday INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+        }
+
         @Volatile private var instance: AscendDatabase? = null
 
         fun getInstance(context: Context): AscendDatabase =
@@ -238,7 +257,7 @@ abstract class AscendDatabase : RoomDatabase() {
                     AscendDatabase::class.java,
                     "ascend.db",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .build()
                     .also { instance = it }
             }
@@ -646,7 +665,7 @@ interface ChatMessageDao {
 
 ==============================================================================
   FILE:  app/src/main/java/com/ascend/app/data/db/Entities.kt
-  LINES: 230
+  LINES: 239
 ==============================================================================
 
 package com.ascend.app.data.db
@@ -718,6 +737,15 @@ data class HunterProfileEntity(
     /** ISO date of the most recent fully-cleared day; stops the counter being
      * farmed by unchecking and rechecking a habit. */
     val lastPerfectDate: String? = null,
+    /** ISO date of the last day the midnight rollover actually evaluated.
+     * Null until the first rollover runs. Lets the app catch up on days the
+     * OS deferred the worker through, instead of silently skipping them. */
+    val lastRolloverDate: String? = null,
+    /** Date the Mana Conversion daily allowance was last drawn against, with
+     * the XP taken on it. Stored as a pair so the cap resets by date rather
+     * than needing a scheduled job to clear it. */
+    val manaConvertedDate: String? = null,
+    val manaConvertedXpToday: Int = 0,
     /** Manually spent stat points, on top of levels earned from XP. */
     val allocatedPoints: Map<Stat, Int> = emptyMap(),
     val unlockedSkills: Set<Skill> = emptySet(),

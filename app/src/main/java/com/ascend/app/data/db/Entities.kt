@@ -67,6 +67,15 @@ data class HunterProfileEntity(
     /** ISO date of the most recent fully-cleared day; stops the counter being
      * farmed by unchecking and rechecking a habit. */
     val lastPerfectDate: String? = null,
+    /** ISO date of the last day the midnight rollover actually evaluated.
+     * Null until the first rollover runs. Lets the app catch up on days the
+     * OS deferred the worker through, instead of silently skipping them. */
+    val lastRolloverDate: String? = null,
+    /** Date the Mana Conversion daily allowance was last drawn against, with
+     * the XP taken on it. Stored as a pair so the cap resets by date rather
+     * than needing a scheduled job to clear it. */
+    val manaConvertedDate: String? = null,
+    val manaConvertedXpToday: Int = 0,
     /** Manually spent stat points, on top of levels earned from XP. */
     val allocatedPoints: Map<Stat, Int> = emptyMap(),
     val unlockedSkills: Set<Skill> = emptySet(),

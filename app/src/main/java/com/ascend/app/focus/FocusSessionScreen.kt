@@ -82,23 +82,40 @@ fun FocusSessionScreen(
     suspend fun saveSession(rating: DifficultyRating?) {
         if (saved) return
         saved = true
+        // Recomputed here rather than trusting the last rendered value: if the
+        // session was backgrounded, the display tick may not have run since.
+        val actualSeconds = if (startTimeMillis == 0L) {
+            0
+        } else {
+            ((System.currentTimeMillis() - startTimeMillis) / 1000)
+                .toInt()
+                .coerceIn(0, plannedSeconds)
+        }
         habit?.let {
             repository.recordFocusSession(
                 habit = it,
                 startTimeEpochMillis = startTimeMillis,
                 plannedDurationMinutes = plannedMinutes,
-                actualDurationSeconds = elapsedSeconds,
+                actualDurationSeconds = actualSeconds,
                 completedFully = completedFully,
                 rating = rating,
             )
         }
     }
 
+    // Elapsed time is derived from the wall clock rather than by counting
+    // delay(1000) ticks. Counting ticks under-reports whenever the coroutine
+    // is throttled — Doze, app standby, or simply a busy main thread — so a
+    // backgrounded 20-minute session could be credited as 15 and then be
+    // recorded that way. Subtracting timestamps is immune to that: the tick
+    // only decides how often the display refreshes, not what it reports.
     LaunchedEffect(phase) {
         if (phase == Phase.RUNNING) {
-            while (elapsedSeconds < plannedSeconds) {
-                delay(1000)
-                elapsedSeconds++
+            while (true) {
+                val elapsed = ((System.currentTimeMillis() - startTimeMillis) / 1000).toInt()
+                elapsedSeconds = elapsed.coerceIn(0, plannedSeconds)
+                if (elapsed >= plannedSeconds) break
+                delay(250)
             }
             completedFully = true
             phase = Phase.RATING

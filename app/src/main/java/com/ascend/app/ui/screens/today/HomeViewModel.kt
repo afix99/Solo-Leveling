@@ -16,8 +16,11 @@ import com.ascend.app.domain.Achievement
 import com.ascend.app.domain.StarterPack
 import com.ascend.app.domain.Stat
 import java.time.LocalDate
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -34,18 +37,39 @@ data class XpGain(
  * and the nudges. See design spec §4.5, §5. */
 class HomeViewModel(private val repository: AscendRepository) : ViewModel() {
 
-    private val today: LocalDate = LocalDate.now()
-    val todayDate: LocalDate get() = today
+    /**
+     * The day the screen is currently showing.
+     *
+     * Deliberately not a cached `LocalDate.now()`: the app can sit open across
+     * midnight — during a long focus session, or just left in recents — and a
+     * captured date would keep writing completions to yesterday, out of step
+     * with the rollover worker. Everything reads through [today], which
+     * re-checks the clock and re-points the date-keyed flows when the day turns.
+     */
+    private val currentDate = MutableStateFlow(LocalDate.now())
+    val todayDate: LocalDate get() = currentDate.value
+
+    /** Reads the clock fresh, publishing the new day if it has turned over. */
+    private fun today(): LocalDate {
+        val now = LocalDate.now()
+        if (now != currentDate.value) currentDate.value = now
+        return now
+    }
 
     private fun <T> flowState(initial: T, block: AscendRepository.() -> kotlinx.coroutines.flow.Flow<T>) =
         repository.block().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initial)
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun <T> dateFlowState(initial: T, block: AscendRepository.(LocalDate) -> kotlinx.coroutines.flow.Flow<T>) =
+        currentDate.flatMapLatest { repository.block(it) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initial)
+
     val habits: StateFlow<List<HabitEntity>> = flowState(emptyList()) { observeActiveHabits() }
-    val logsToday: StateFlow<List<DailyLogEntity>> = flowState(emptyList()) { observeLogsForDate(today) }
+    val logsToday: StateFlow<List<DailyLogEntity>> = dateFlowState(emptyList()) { observeLogsForDate(it) }
     val statProgress: StateFlow<List<StatProgressEntity>> = flowState(emptyList()) { observeStatProgress() }
     val totalXp: StateFlow<Int> = flowState(0) { observeTotalXp() }
     val hunterProfile: StateFlow<HunterProfileEntity?> = flowState(null) { observeHunterProfile() }
-    val dailyQuest: StateFlow<DailyQuestEntity?> = flowState(null) { observeDailyQuest(today) }
+    val dailyQuest: StateFlow<DailyQuestEntity?> = dateFlowState(null) { observeDailyQuest(it) }
 
     var showRecalibrationNudge by mutableStateOf(false)
         private set
@@ -76,11 +100,11 @@ class HomeViewModel(private val repository: AscendRepository) : ViewModel() {
 
     init {
         viewModelScope.launch {
-            showRecalibrationNudge = repository.shouldShowRecalibrationNudge(today)
+            showRecalibrationNudge = repository.shouldShowRecalibrationNudge(today())
             // dailyQuestProgress returns null only when no quest exists yet, so
             // this distinguishes "already issued" from "issuing right now".
-            val hadQuestBefore = repository.dailyQuestProgress(today) != null
-            repository.ensureDailyQuest(today)?.let { quest ->
+            val hadQuestBefore = repository.dailyQuestProgress(today()) != null
+            repository.ensureDailyQuest(today())?.let { quest ->
                 if (!hadQuestBefore) newQuestAnnouncement = quest
             }
             refreshQuestProgress()
@@ -88,8 +112,25 @@ class HomeViewModel(private val repository: AscendRepository) : ViewModel() {
         }
     }
 
+    /**
+     * Re-checks the clock and settles any day that ended while the app was
+     * away. The worker is the primary path, but it can be deferred for days,
+     * so opening the app is the reliable second chance to apply penalties and
+     * advance a Gate. Cheap on a normal day — usually zero days to evaluate.
+     */
+    fun onResumed() {
+        viewModelScope.launch {
+            val date = today()
+            repository.runRolloverCatchUp(date)
+            showRecalibrationNudge = repository.shouldShowRecalibrationNudge(date)
+            repository.ensureDailyQuest(date)
+            refreshQuestProgress()
+            checkAchievements()
+        }
+    }
+
     private suspend fun refreshQuestProgress() {
-        questProgress = repository.dailyQuestProgress(today) ?: 0
+        questProgress = repository.dailyQuestProgress(today()) ?: 0
     }
 
     private suspend fun checkAchievements() {
@@ -99,7 +140,7 @@ class HomeViewModel(private val repository: AscendRepository) : ViewModel() {
 
     fun toggleHabit(habit: HabitEntity, completed: Boolean) {
         viewModelScope.launch {
-            val result = repository.setHabitCompleted(habit, today, completed)
+            val result = repository.setHabitCompleted(habit, today(), completed)
             lastXpGain = if (completed) {
                 XpGain(
                     amount = result.xp,
@@ -118,7 +159,7 @@ class HomeViewModel(private val repository: AscendRepository) : ViewModel() {
 
     fun claimDailyQuest() {
         viewModelScope.launch {
-            repository.claimDailyQuest(today)?.let { questClaimed = it }
+            repository.claimDailyQuest(today())?.let { questClaimed = it }
             refreshQuestProgress()
             checkAchievements()
         }
@@ -162,8 +203,8 @@ class HomeViewModel(private val repository: AscendRepository) : ViewModel() {
             // Adding habits may make a quest generatable for the first time.
             // Only announce if one didn't already exist, or re-adding a pack
             // would re-open the System window on an already-issued quest.
-            val hadQuestBefore = repository.dailyQuestProgress(today) != null
-            repository.ensureDailyQuest(today)?.let { quest ->
+            val hadQuestBefore = repository.dailyQuestProgress(today()) != null
+            repository.ensureDailyQuest(today())?.let { quest ->
                 if (!hadQuestBefore) newQuestAnnouncement = quest
             }
             refreshQuestProgress()

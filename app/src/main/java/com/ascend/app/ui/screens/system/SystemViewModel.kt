@@ -9,6 +9,7 @@ import com.ascend.app.data.repo.AscendRepository
 import com.ascend.app.domain.GateRank
 import com.ascend.app.domain.GateRun
 import com.ascend.app.domain.HunterLoadout
+import com.ascend.app.domain.ManaConversion
 import com.ascend.app.domain.Rank
 import com.ascend.app.domain.Shadow
 import com.ascend.app.domain.Skill
@@ -31,6 +32,8 @@ data class SystemState(
     val skillPointsAvailable: Int = 0,
     val shadows: List<Shadow> = emptyList(),
     val activeGate: GateRun? = null,
+    /** XP already bought with gold today, against ManaConversion.DAILY_XP_CAP. */
+    val manaXpConvertedToday: Int = 0,
 )
 
 class SystemViewModel(private val repository: AscendRepository) : ViewModel() {
@@ -69,7 +72,28 @@ class SystemViewModel(private val repository: AscendRepository) : ViewModel() {
             skillPointsAvailable = Skill.pointsAvailable(level, rank, profile.unlockedSkills),
             shadows = loadout.shadows,
             activeGate = repository.activeGate(),
+            manaXpConvertedToday = repository.manaXpConvertedToday(LocalDate.now()),
         )
+    }
+
+    /**
+     * Burns gold for XP in [stat] — the trade Mana Conversion unlocks.
+     *
+     * The repository charges only for XP it actually grants, so a refusal here
+     * means the daily allowance is spent or the balance is short, never that
+     * gold vanished.
+     */
+    fun convertGold(stat: Stat, gold: Int) {
+        viewModelScope.launch {
+            val xp = repository.convertGoldToXp(stat, gold, LocalDate.now())
+            message = if (xp > 0) {
+                "Converted ${ManaConversion.goldFor(xp)} gold into $xp ${stat.shortLabel} XP."
+            } else {
+                "Nothing to convert — you need ${ManaConversion.GOLD_PER_XP} gold per XP, " +
+                    "and today's allowance may already be spent."
+            }
+            refresh()
+        }
     }
 
     fun allocate(stat: Stat) {

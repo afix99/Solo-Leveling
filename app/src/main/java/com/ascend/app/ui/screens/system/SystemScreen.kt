@@ -43,6 +43,7 @@ import com.ascend.app.domain.GateRank
 import com.ascend.app.domain.Gates
 import com.ascend.app.domain.Shadow
 import com.ascend.app.domain.Shadows
+import com.ascend.app.domain.ManaConversion
 import com.ascend.app.domain.Skill
 import com.ascend.app.domain.StatAllocation
 import com.ascend.app.domain.Stat
@@ -225,6 +226,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.statusTab(vm: SystemV
         }
     }
 
+    // Only shown once the skill is unlocked — the skill's whole promise is
+    // that it puts this control on the System screen.
+    if (vm.state.loadout.has(Skill.MANA_CONVERSION)) {
+        item { ManaConversionPanel(vm) }
+    }
+
     item {
         GlassCard {
             Text(
@@ -234,6 +241,85 @@ private fun androidx.compose.foundation.lazy.LazyListScope.statusTab(vm: SystemV
                 modifier = Modifier.clickable { vm.respec() },
             )
         }
+    }
+}
+
+/**
+ * Gold → XP, gated behind Mana Conversion.
+ *
+ * The rate is shown plainly and the remaining daily allowance is always
+ * visible, because the trade is meant to be an obvious, slightly bad deal that
+ * you take on purpose — not a shortcut that quietly outpaces doing the work.
+ */
+@Composable
+private fun ManaConversionPanel(vm: SystemViewModel) {
+    val state = vm.state
+    val remainingXp = ManaConversion.remainingToday(state.manaXpConvertedToday)
+    val spendable = ManaConversion.maxSpendableNow(state.gold, state.manaXpConvertedToday)
+    var target by remember { mutableStateOf(Stat.entries.first()) }
+
+    SystemPanel(accent = AscendColors.Amber, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Eyebrow("Mana Conversion", color = AscendColors.Amber)
+            Pill("$remainingXp XP LEFT TODAY", AscendColors.Amber)
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Burn ${ManaConversion.GOLD_PER_XP} Gold for 1 XP, up to " +
+                "${ManaConversion.DAILY_XP_CAP} XP a day. A deliberately poor rate — it is a " +
+                "use for idle Gold, not a way around the work.",
+            color = AscendColors.TextSecondary,
+            fontSize = 12.sp,
+        )
+
+        Spacer(Modifier.height(10.dp))
+        Text("Into which stat", color = AscendColors.TextTertiary, fontSize = 11.sp)
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Stat.entries.forEach { stat ->
+                val selected = stat == target
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(7.dp))
+                        .background(
+                            if (selected) stat.color().copy(alpha = 0.25f)
+                            else AscendColors.SurfaceElevated2,
+                        )
+                        .clickable { target = stat }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                ) {
+                    Text(
+                        stat.shortLabel,
+                        color = if (selected) stat.color() else AscendColors.TextTertiary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        val canConvert = spendable >= ManaConversion.GOLD_PER_XP
+        Text(
+            if (canConvert) {
+                "Convert $spendable Gold → ${ManaConversion.xpFor(spendable, state.manaXpConvertedToday)} " +
+                    "${target.shortLabel} XP"
+            } else if (remainingXp == 0) {
+                "Today's allowance is spent. It resets tomorrow."
+            } else {
+                "You need at least ${ManaConversion.GOLD_PER_XP} Gold to convert."
+            },
+            color = if (canConvert) AscendColors.Amber else AscendColors.TextTertiary,
+            fontWeight = if (canConvert) FontWeight.Bold else FontWeight.Normal,
+            fontSize = 13.sp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = canConvert) { vm.convertGold(target, spendable) },
+        )
     }
 }
 

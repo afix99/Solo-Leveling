@@ -28,7 +28,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CoachAdviceEntity::class,
         ChatMessageEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -52,6 +52,9 @@ abstract class AscendDatabase : RoomDatabase() {
     abstract fun chatMessageDao(): ChatMessageDao
 
     companion object {
+        /** Mirrors the @Database version so other layers can record it. */
+        const val SCHEMA_VERSION = 6
+
         /**
          * v2 adds the economy layer: Gold, titles, classes, rewards,
          * achievements and daily quests. Written as a real migration rather
@@ -210,6 +213,22 @@ abstract class AscendDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Records how far the midnight rollover has actually got. Existing
+         * users start at null, which the catch-up treats as "only evaluate
+         * yesterday" — the old behaviour — so upgrading never retroactively
+         * penalises days that passed before this column existed.
+         */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN lastRolloverDate TEXT")
+                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN manaConvertedDate TEXT")
+                db.execSQL(
+                    "ALTER TABLE hunter_profile ADD COLUMN manaConvertedXpToday INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+        }
+
         @Volatile private var instance: AscendDatabase? = null
 
         fun getInstance(context: Context): AscendDatabase =
@@ -219,7 +238,7 @@ abstract class AscendDatabase : RoomDatabase() {
                     AscendDatabase::class.java,
                     "ascend.db",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .build()
                     .also { instance = it }
             }

@@ -19,7 +19,7 @@ This file is ~900 lines and is the most plausible candidate for splitting.
 
 ==============================================================================
   FILE:  app/src/main/java/com/ascend/app/data/repo/AscendRepository.kt
-  LINES: 888
+  LINES: 1018
 ==============================================================================
 
 package com.ascend.app.data.repo
@@ -62,10 +62,12 @@ import com.ascend.app.domain.StatAllocation
 import com.ascend.app.domain.EvidenceType
 import com.ascend.app.domain.HunterClass
 import com.ascend.app.domain.HunterStats
+import com.ascend.app.domain.ManaConversion
 import com.ascend.app.domain.Leveling
 import com.ascend.app.domain.StarterPack
 import com.ascend.app.domain.Stat
 import com.ascend.app.domain.StatEffects
+import androidx.room.withTransaction
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlinx.coroutines.Dispatchers
@@ -192,11 +194,20 @@ class AscendRepository(private val db: AscendDatabase) {
     /** What a completion actually paid out, so the UI can show it. */
     data class CompletionResult(val xp: Int, val gold: Int, val streak: Int, val streakBonusPercent: Int)
 
+    /**
+     * Awards XP, gold, evidence and any shadow for a completion, or takes them
+     * back on un-completion.
+     *
+     * Transactional because it writes the log, the stat, the profile balance
+     * and possibly a shadow. A crash between those writes would otherwise
+     * leave gold awarded for a completion that was never recorded — or, worse,
+     * a log with no payout that a re-toggle would then pay out twice.
+     */
     suspend fun setHabitCompleted(
         habit: HabitEntity,
         date: LocalDate,
         completed: Boolean,
-    ): CompletionResult {
+    ): CompletionResult = db.withTransaction {
         val dateStr = date.toString()
         val existing = dailyLogDao.getForHabitAndDate(habit.id, dateStr)
         val isPenaltyQuest = existing?.isPenaltyQuest ?: false
@@ -260,7 +271,7 @@ class AscendRepository(private val db: AscendDatabase) {
 
         if (completed) recordPerfectDayIfEarned(date)
 
-        return CompletionResult(
+        CompletionResult(
             xp = newXp,
             gold = newGold,
             streak = newStreak,
@@ -311,7 +322,7 @@ class AscendRepository(private val db: AscendDatabase) {
      * day that just ended: penalizes missed non-negotiables and queues a
      * Penalty Quest for the following day. See design spec §4.
      */
-    suspend fun runMidnightRollover(rolledDate: LocalDate) {
+    suspend fun runMidnightRollover(rolledDate: LocalDate) = db.withTransaction {
         val dateStr = rolledDate.toString()
         val nextDateStr = rolledDate.plusDays(1).toString()
         val loadout = currentLoadout()
@@ -356,6 +367,48 @@ class AscendRepository(private val db: AscendDatabase) {
                 // else: a penalty quest is already queued for tomorrow — capped at one, don't stack.
             }
         }
+    }
+
+    /**
+     * Evaluates every day that has ended but never been rolled over, oldest
+     * first, and advances any active Gate through the same days.
+     *
+     * The worker fires just after local midnight, but the OS is free to defer
+     * it — Doze, battery optimisation, or the app being force-stopped can all
+     * swallow a day entirely. Without this, those days are silently skipped:
+     * no penalty, no gate progress, and a Gate that should have failed keeps
+     * looking alive. Running from [lastRolloverDate] instead of a hardcoded
+     * "yesterday" makes the rollover eventually consistent.
+     *
+     * Safe to call often — on a normal day it evaluates one date, and on a day
+     * already evaluated it does nothing.
+     */
+    suspend fun runRolloverCatchUp(today: LocalDate) {
+        val profile = getHunterProfile()
+        val lastRolled = profile.lastRolloverDate?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+        val lastDayToEvaluate = today.minusDays(1)
+
+        // A null marker means this install predates the column. Evaluating
+        // every day since the user's first log would invent penalties for days
+        // they were never warned about, so start from yesterday as before.
+        var date = lastRolled?.plusDays(1) ?: lastDayToEvaluate
+        if (date.isAfter(lastDayToEvaluate)) return
+
+        // A device clock pushed far forward would otherwise walk years of
+        // empty days. Nothing is lost by capping: days with no logs produce
+        // penalties the user can do nothing about anyway.
+        val earliest = lastDayToEvaluate.minusDays(MAX_CATCH_UP_DAYS - 1)
+        if (date.isBefore(earliest)) date = earliest
+
+        while (!date.isAfter(lastDayToEvaluate)) {
+            runMidnightRollover(date)
+            advanceGateForDay(date)
+            date = date.plusDays(1)
+        }
+
+        hunterProfileDao.upsert(
+            getHunterProfile().copy(lastRolloverDate = lastDayToEvaluate.toString()),
+        )
     }
 
     suspend fun getLogForHabitAndDate(habitId: Long, date: LocalDate): DailyLogEntity? =
@@ -494,10 +547,12 @@ class AscendRepository(private val db: AscendDatabase) {
 
     /** Spends gold on a reward. Returns false (and changes nothing) if the
      * balance can't cover it. */
-    suspend fun purchaseReward(rewardId: Long): Boolean {
-        val reward = rewardDao.getById(rewardId) ?: return false
+    /** Transactional: gold must never leave the balance without a purchase
+     * recorded against it, nor a purchase be recorded unpaid. */
+    suspend fun purchaseReward(rewardId: Long): Boolean = db.withTransaction {
+        val reward = rewardDao.getById(rewardId) ?: return@withTransaction false
         val profile = getHunterProfile()
-        if (profile.gold < reward.goldCost) return false
+        if (profile.gold < reward.goldCost) return@withTransaction false
 
         hunterProfileDao.upsert(profile.copy(gold = profile.gold - reward.goldCost))
         rewardDao.update(reward.copy(timesPurchased = reward.timesPurchased + 1))
@@ -509,7 +564,7 @@ class AscendRepository(private val db: AscendDatabase) {
                 purchasedAtEpochMillis = System.currentTimeMillis(),
             ),
         )
-        return true
+        true
     }
 
     // ---- Achievements & titles ------------------------------------------------
@@ -605,11 +660,13 @@ class AscendRepository(private val db: AscendDatabase) {
     }
 
     /** Pays out today's quest if it's complete and hasn't been claimed. */
-    suspend fun claimDailyQuest(date: LocalDate): DailyQuestEntity? {
-        val quest = dailyQuestDao.getForDate(date.toString()) ?: return null
-        if (quest.claimed) return null
-        val progress = dailyQuestProgress(date) ?: return null
-        if (progress < quest.targetCount) return null
+    /** Transactional: marking the quest claimed and paying it out must happen
+     * together, or a crash between them silently eats the reward. */
+    suspend fun claimDailyQuest(date: LocalDate): DailyQuestEntity? = db.withTransaction {
+        val quest = dailyQuestDao.getForDate(date.toString()) ?: return@withTransaction null
+        if (quest.claimed) return@withTransaction null
+        val progress = dailyQuestProgress(date) ?: return@withTransaction null
+        if (progress < quest.targetCount) return@withTransaction null
 
         dailyQuestDao.upsert(quest.copy(claimed = true))
         val multiplier = currentLoadout().dailyQuestMultiplier()
@@ -618,7 +675,7 @@ class AscendRepository(private val db: AscendDatabase) {
         val perStat = ((quest.xpReward * multiplier) / Stat.entries.size).coerceAtLeast(1)
         Stat.entries.forEach { adjustStatXp(it, perStat) }
         addGold(quest.goldReward * multiplier)
-        return quest
+        quest
     }
 
     // ---- Loadout: the single place every payout modifier is resolved -------
@@ -691,6 +748,47 @@ class AscendRepository(private val db: AscendDatabase) {
         return true
     }
 
+    // ---- Mana Conversion ----------------------------------------------------
+
+    /** XP already converted today, resetting when the date rolls over. */
+    suspend fun manaXpConvertedToday(today: LocalDate): Int {
+        val profile = getHunterProfile()
+        return if (profile.manaConvertedDate == today.toString()) profile.manaConvertedXpToday else 0
+    }
+
+    /**
+     * Burns gold for XP in one stat, the trade [Skill.MANA_CONVERSION] unlocks.
+     *
+     * Charges only for the XP actually granted: the daily cap can cut a stake
+     * short, and billing the full amount would take gold for XP never given.
+     * Returns the XP granted, or 0 if the trade could not happen at all.
+     */
+    suspend fun convertGoldToXp(stat: Stat, goldOffered: Int, today: LocalDate): Int =
+        db.withTransaction {
+            val profile = getHunterProfile()
+            if (Skill.MANA_CONVERSION !in profile.unlockedSkills) return@withTransaction 0
+
+            val convertedToday =
+                if (profile.manaConvertedDate == today.toString()) profile.manaConvertedXpToday else 0
+            val affordable = goldOffered.coerceAtMost(profile.gold)
+            val xp = ManaConversion.xpFor(affordable, convertedToday)
+            if (xp <= 0) return@withTransaction 0
+
+            val goldSpent = ManaConversion.goldFor(xp)
+            hunterProfileDao.upsert(
+                profile.copy(
+                    gold = profile.gold - goldSpent,
+                    manaConvertedDate = today.toString(),
+                    manaConvertedXpToday = convertedToday + xp,
+                ),
+            )
+            adjustStatXp(stat, xp)
+            // Deliberately not logged to the Evidence Log: that log exists to
+            // show the user proof they did the work, and spending gold is not
+            // evidence of anything they did.
+            xp
+        }
+
     suspend fun skillPointsAvailable(): Int =
         Skill.pointsAvailable(hunterLevel(), currentRank(), getHunterProfile().unlockedSkills)
 
@@ -726,10 +824,18 @@ class AscendRepository(private val db: AscendDatabase) {
 
     suspend fun activeGate(): GateRun? = gateRunDao.getActive()?.toDomain()
 
-    /** Pays the stake up front — that is what gives the run its weight. */
-    suspend fun enterGate(rank: GateRank, today: LocalDate): Boolean {
+    /**
+     * Pays the stake up front — that is what gives the run its weight.
+     *
+     * Transactional: this is the costliest write in the app. Deducting the
+     * stake without inserting the run would take the user's gold and give
+     * them nothing to show for it.
+     */
+    suspend fun enterGate(rank: GateRank, today: LocalDate): Boolean = db.withTransaction {
         val profile = getHunterProfile()
-        if (!Gates.canEnter(activeGate(), rank, hunterLevel(), profile.gold)) return false
+        if (!Gates.canEnter(activeGate(), rank, hunterLevel(), profile.gold)) {
+            return@withTransaction false
+        }
 
         hunterProfileDao.upsert(profile.copy(gold = profile.gold - rank.stake))
         gateRunDao.insert(
@@ -740,7 +846,7 @@ class AscendRepository(private val db: AscendDatabase) {
                 lastEvaluatedDate = today.minusDays(1).toString(),
             ),
         )
-        return true
+        true
     }
 
     /** Abandoning forfeits the stake; the gold is already spent either way. */
@@ -754,10 +860,14 @@ class AscendRepository(private val db: AscendDatabase) {
      * Advances the active run for a finished day. Guarded by lastEvaluatedDate
      * so a rollover that fires twice can't double-count or wrongly fail a run.
      */
-    suspend fun advanceGateForDay(rolledDate: LocalDate): GateRun? {
-        val entity = gateRunDao.getActive() ?: return null
-        if (entity.lastEvaluatedDate == rolledDate.toString()) return entity.toDomain()
-        if (LocalDate.parse(entity.startDate).isAfter(rolledDate)) return entity.toDomain()
+    suspend fun advanceGateForDay(rolledDate: LocalDate): GateRun? = db.withTransaction {
+        val entity = gateRunDao.getActive() ?: return@withTransaction null
+        if (entity.lastEvaluatedDate == rolledDate.toString()) {
+            return@withTransaction entity.toDomain()
+        }
+        if (LocalDate.parse(entity.startDate).isAfter(rolledDate)) {
+            return@withTransaction entity.toDomain()
+        }
 
         val nonNegotiables = habitDao.getActiveHabits().filter { it.isNonNegotiable }
         val completed = dailyLogDao.completedHabitIdsOn(rolledDate.toString()).toSet()
@@ -782,7 +892,7 @@ class AscendRepository(private val db: AscendDatabase) {
                 advanced.id,
             )
         }
-        return advanced
+        advanced
     }
 
     /** Wipes every table — used by Settings' "Reset data". Irreversible. */
@@ -887,14 +997,26 @@ class AscendRepository(private val db: AscendDatabase) {
 
     // ---- Export -------------------------------------------------------------
 
-    /** A minimal, dependency-free JSON export of everything the app knows.
-     * Hand-built rather than pulled from a serialization library, since the
-     * shape is small and fully under our control. */
+    /**
+     * A minimal, dependency-free JSON summary of the setup. Hand-built rather
+     * than pulled from a serialization library, since the shape is small and
+     * fully under our control.
+     *
+     * Note what this is not: it carries the hunter name and habit list, but no
+     * XP, gold, streaks or logs, and nothing reads it back in. It is a record
+     * of how the app was configured, not a backup that can restore progress.
+     * The envelope carries the schema version so that if an import is ever
+     * built, it can tell which shape it is looking at instead of guessing.
+     */
     suspend fun exportAllDataAsJson(): String = withContext(Dispatchers.IO) {
         val habits = habitDao.getActiveHabits()
         val profile = getHunterProfile()
         val sb = StringBuilder()
         sb.append("{\n")
+        sb.append("  \"ascendExportVersion\": $EXPORT_VERSION,\n")
+        sb.append("  \"schemaVersion\": ${AscendDatabase.SCHEMA_VERSION},\n")
+        sb.append("  \"exportedAt\": ${quote(java.time.Instant.now().toString())},\n")
+        sb.append("  \"contains\": \"setup only — no progress, streaks or history\",\n")
         sb.append("  \"hunterName\": ${quote(profile.hunterName)},\n")
         sb.append("  \"habits\": [\n")
         sb.append(
@@ -909,6 +1031,14 @@ class AscendRepository(private val db: AscendDatabase) {
     }
 
     private fun quote(value: String): String = "\"" + value.replace("\"", "\\\"") + "\""
+
+    companion object {
+        /** Upper bound on how many days one catch-up will walk. */
+        const val MAX_CATCH_UP_DAYS = 30L
+
+        /** Shape of the JSON export. Bump when the fields change. */
+        const val EXPORT_VERSION = 1
+    }
 }
 
 

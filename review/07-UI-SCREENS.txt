@@ -3072,7 +3072,7 @@ private fun StatCard(card: StatCardState) {
 
 ==============================================================================
   FILE:  app/src/main/java/com/ascend/app/ui/screens/system/SystemScreen.kt
-  LINES: 467
+  LINES: 553
 ==============================================================================
 
 package com.ascend.app.ui.screens.system
@@ -3120,6 +3120,7 @@ import com.ascend.app.domain.GateRank
 import com.ascend.app.domain.Gates
 import com.ascend.app.domain.Shadow
 import com.ascend.app.domain.Shadows
+import com.ascend.app.domain.ManaConversion
 import com.ascend.app.domain.Skill
 import com.ascend.app.domain.StatAllocation
 import com.ascend.app.domain.Stat
@@ -3302,6 +3303,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.statusTab(vm: SystemV
         }
     }
 
+    // Only shown once the skill is unlocked — the skill's whole promise is
+    // that it puts this control on the System screen.
+    if (vm.state.loadout.has(Skill.MANA_CONVERSION)) {
+        item { ManaConversionPanel(vm) }
+    }
+
     item {
         GlassCard {
             Text(
@@ -3311,6 +3318,85 @@ private fun androidx.compose.foundation.lazy.LazyListScope.statusTab(vm: SystemV
                 modifier = Modifier.clickable { vm.respec() },
             )
         }
+    }
+}
+
+/**
+ * Gold → XP, gated behind Mana Conversion.
+ *
+ * The rate is shown plainly and the remaining daily allowance is always
+ * visible, because the trade is meant to be an obvious, slightly bad deal that
+ * you take on purpose — not a shortcut that quietly outpaces doing the work.
+ */
+@Composable
+private fun ManaConversionPanel(vm: SystemViewModel) {
+    val state = vm.state
+    val remainingXp = ManaConversion.remainingToday(state.manaXpConvertedToday)
+    val spendable = ManaConversion.maxSpendableNow(state.gold, state.manaXpConvertedToday)
+    var target by remember { mutableStateOf(Stat.entries.first()) }
+
+    SystemPanel(accent = AscendColors.Amber, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Eyebrow("Mana Conversion", color = AscendColors.Amber)
+            Pill("$remainingXp XP LEFT TODAY", AscendColors.Amber)
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Burn ${ManaConversion.GOLD_PER_XP} Gold for 1 XP, up to " +
+                "${ManaConversion.DAILY_XP_CAP} XP a day. A deliberately poor rate — it is a " +
+                "use for idle Gold, not a way around the work.",
+            color = AscendColors.TextSecondary,
+            fontSize = 12.sp,
+        )
+
+        Spacer(Modifier.height(10.dp))
+        Text("Into which stat", color = AscendColors.TextTertiary, fontSize = 11.sp)
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Stat.entries.forEach { stat ->
+                val selected = stat == target
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(7.dp))
+                        .background(
+                            if (selected) stat.color().copy(alpha = 0.25f)
+                            else AscendColors.SurfaceElevated2,
+                        )
+                        .clickable { target = stat }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                ) {
+                    Text(
+                        stat.shortLabel,
+                        color = if (selected) stat.color() else AscendColors.TextTertiary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        val canConvert = spendable >= ManaConversion.GOLD_PER_XP
+        Text(
+            if (canConvert) {
+                "Convert $spendable Gold → ${ManaConversion.xpFor(spendable, state.manaXpConvertedToday)} " +
+                    "${target.shortLabel} XP"
+            } else if (remainingXp == 0) {
+                "Today's allowance is spent. It resets tomorrow."
+            } else {
+                "You need at least ${ManaConversion.GOLD_PER_XP} Gold to convert."
+            },
+            color = if (canConvert) AscendColors.Amber else AscendColors.TextTertiary,
+            fontWeight = if (canConvert) FontWeight.Bold else FontWeight.Normal,
+            fontSize = 13.sp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = canConvert) { vm.convertGold(target, spendable) },
+        )
     }
 }
 
@@ -3674,7 +3760,7 @@ fun StatLevelUpToast(stat: Stat, level: Int, onDismiss: () -> Unit) {
 
 ==============================================================================
   FILE:  app/src/main/java/com/ascend/app/ui/screens/today/TodayScreen.kt
-  LINES: 707
+  LINES: 714
 ==============================================================================
 
 package com.ascend.app.ui.screens.today
@@ -3725,6 +3811,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ascend.app.data.db.DailyLogEntity
 import com.ascend.app.data.db.DailyQuestEntity
@@ -3755,6 +3843,11 @@ import java.time.LocalTime
 fun TodayScreen(repository: AscendRepository, onOpenHabits: () -> Unit) {
     val vm: HomeViewModel = viewModel(factory = SimpleViewModelFactory { HomeViewModel(repository) })
     val context = LocalContext.current
+
+    // Returning to the screen re-reads the clock and settles any day that
+    // ended while the app was backgrounded, so a deferred worker doesn't
+    // leave penalties and Gate progress unapplied.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.onResumed() }
 
     val habits by vm.habits.collectAsStateWithLifecycle()
     val logs by vm.logsToday.collectAsStateWithLifecycle()
@@ -4600,7 +4693,7 @@ class FocusSessionActivity : ComponentActivity() {
 
 ==============================================================================
   FILE:  app/src/main/java/com/ascend/app/focus/FocusSessionScreen.kt
-  LINES: 285
+  LINES: 302
 ==============================================================================
 
 package com.ascend.app.focus
@@ -4687,23 +4780,40 @@ fun FocusSessionScreen(
     suspend fun saveSession(rating: DifficultyRating?) {
         if (saved) return
         saved = true
+        // Recomputed here rather than trusting the last rendered value: if the
+        // session was backgrounded, the display tick may not have run since.
+        val actualSeconds = if (startTimeMillis == 0L) {
+            0
+        } else {
+            ((System.currentTimeMillis() - startTimeMillis) / 1000)
+                .toInt()
+                .coerceIn(0, plannedSeconds)
+        }
         habit?.let {
             repository.recordFocusSession(
                 habit = it,
                 startTimeEpochMillis = startTimeMillis,
                 plannedDurationMinutes = plannedMinutes,
-                actualDurationSeconds = elapsedSeconds,
+                actualDurationSeconds = actualSeconds,
                 completedFully = completedFully,
                 rating = rating,
             )
         }
     }
 
+    // Elapsed time is derived from the wall clock rather than by counting
+    // delay(1000) ticks. Counting ticks under-reports whenever the coroutine
+    // is throttled — Doze, app standby, or simply a busy main thread — so a
+    // backgrounded 20-minute session could be credited as 15 and then be
+    // recorded that way. Subtracting timestamps is immune to that: the tick
+    // only decides how often the display refreshes, not what it reports.
     LaunchedEffect(phase) {
         if (phase == Phase.RUNNING) {
-            while (elapsedSeconds < plannedSeconds) {
-                delay(1000)
-                elapsedSeconds++
+            while (true) {
+                val elapsed = ((System.currentTimeMillis() - startTimeMillis) / 1000).toInt()
+                elapsedSeconds = elapsed.coerceIn(0, plannedSeconds)
+                if (elapsed >= plannedSeconds) break
+                delay(250)
             }
             completedFully = true
             phase = Phase.RATING

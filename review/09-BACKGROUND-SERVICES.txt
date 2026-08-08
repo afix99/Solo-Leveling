@@ -282,10 +282,10 @@ class MidnightRolloverWorker(context: Context, params: WorkerParameters) : Corou
     override suspend fun doWork(): Result {
         val repo = applicationContext.repository()
         val today = LocalDate.now()
-        val rolledDate = today.minusDays(1)
-        repo.runMidnightRollover(rolledDate)
-        // Gates settle on the same boundary as penalties, so a day counts once.
-        repo.advanceGateForDay(rolledDate)
+        // Catches up every day that ended without being evaluated, not just
+        // yesterday — the OS is free to defer this worker for days at a time.
+        // Gates settle on the same boundary, so a day counts exactly once.
+        repo.runRolloverCatchUp(today)
 
         if (today.dayOfWeek == DayOfWeek.MONDAY) {
             repo.generateWeeklyReview(today.minusDays(7))
