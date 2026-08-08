@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cleartext stays blocked outright. The only outbound traffic ASCEND makes is
+     the optional AI Coach calling the provider the user configured, over HTTPS. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>
