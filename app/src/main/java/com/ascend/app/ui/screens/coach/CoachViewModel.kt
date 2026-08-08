@@ -11,6 +11,7 @@ import com.ascend.app.data.ai.AiResult
 import com.ascend.app.data.ai.CoachPrompts
 import com.ascend.app.data.ai.ModelListResult
 import com.ascend.app.data.db.AiSettingsEntity
+import com.ascend.app.data.db.ChatMessageEntity
 import com.ascend.app.data.db.CoachAdviceEntity
 import com.ascend.app.data.repo.AscendRepository
 import com.ascend.app.domain.AdviceType
@@ -78,6 +79,13 @@ class CoachViewModel(private val repository: AscendRepository) : ViewModel() {
     var notice by mutableStateOf<String?>(null)
         private set
 
+    val chat: StateFlow<List<ChatMessageEntity>> =
+        repository.observeChat()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    var sending by mutableStateOf(false)
+        private set
+
     fun saveSettings(updated: AiSettingsEntity) {
         viewModelScope.launch { repository.saveAiSettings(updated) }
     }
@@ -103,7 +111,7 @@ class CoachViewModel(private val repository: AscendRepository) : ViewModel() {
             }
 
             val ctx = repository.buildCoachContext(LocalDate.now())
-            val (system, user) = CoachPrompts.build(type, ctx)
+            val (system, user) = CoachPrompts.build(type, ctx, current.systemVoice)
 
             val resolved = client.completeAutoRecovering(
                 activeProvider, current.apiKey, model, system, user,
@@ -201,6 +209,49 @@ class CoachViewModel(private val repository: AscendRepository) : ViewModel() {
 
     fun clearModelsMessage() {
         modelsMessage = null
+    }
+
+    /** Sends a chat turn. The reply is persisted so the thread survives restarts. */
+    fun sendChat(message: String) {
+        val trimmed = message.trim()
+        if (trimmed.isEmpty() || sending) return
+        viewModelScope.launch {
+            sending = true
+            error = null
+            repository.addChatMessage("user", trimmed)
+
+            val current = repository.getAiSettings()
+            val activeProvider = runCatching { AiProvider.valueOf(current.provider) }
+                .getOrDefault(AiProvider.OPENROUTER)
+            val model = current.model.ifBlank { activeProvider.defaultModel }
+
+            if (current.apiKey.isBlank()) {
+                error = "No API key saved. Open Setup, paste your key, and tap Save."
+                sending = false
+                return@launch
+            }
+
+            val ctx = repository.buildCoachContext(LocalDate.now())
+            val systemPrompt = CoachPrompts.chatSystemPrompt(ctx, current.systemVoice)
+            val history = repository.recentChat().map { AiClient.ChatTurn(it.role, it.content) }
+
+            when (val result = client.chat(activeProvider, current.apiKey, model, systemPrompt, history)) {
+                is AiResult.Success -> repository.addChatMessage("assistant", result.text)
+                is AiResult.Failure ->
+                    error = "${result.message}\n\n(${activeProvider.displayName} · $model)"
+            }
+            sending = false
+        }
+    }
+
+    fun clearChat() {
+        viewModelScope.launch { repository.clearChat() }
+    }
+
+    fun setSystemVoice(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.saveAiSettings(repository.getAiSettings().copy(systemVoice = enabled))
+        }
     }
 
     fun deleteAdvice(id: Long) {

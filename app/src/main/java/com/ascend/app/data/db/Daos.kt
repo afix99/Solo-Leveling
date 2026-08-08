@@ -280,3 +280,20 @@ interface CoachAdviceDao {
     @Query("DELETE FROM coach_advice WHERE id = :id")
     suspend fun delete(id: Long)
 }
+
+@Dao
+interface ChatMessageDao {
+    @Query("SELECT * FROM chat_messages ORDER BY createdAtEpochMillis ASC")
+    fun observeAll(): Flow<List<ChatMessageEntity>>
+
+    /** Oldest-first, capped — long histories would blow past context limits
+     * and cost more on metered keys. */
+    @Query("SELECT * FROM chat_messages ORDER BY createdAtEpochMillis DESC LIMIT :limit")
+    suspend fun recent(limit: Int): List<ChatMessageEntity>
+
+    @Insert
+    suspend fun insert(entity: ChatMessageEntity): Long
+
+    @Query("DELETE FROM chat_messages")
+    suspend fun clear()
+}

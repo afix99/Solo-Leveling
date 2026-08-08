@@ -35,6 +35,7 @@ import com.ascend.app.domain.Leveling
 import com.ascend.app.ui.components.DockItem
 import com.ascend.app.ui.components.SystemDock
 import com.ascend.app.ui.screens.achievements.AchievementsScreen
+import com.ascend.app.ui.screens.coach.ChatScreen
 import com.ascend.app.ui.screens.coach.CoachScreen
 import com.ascend.app.ui.screens.coach.CoachSetupScreen
 import com.ascend.app.ui.screens.habits.HabitsScreen
@@ -65,6 +66,7 @@ private const val ROUTE_WEEKLY_REVIEW = "weekly_review"
 private const val ROUTE_ACHIEVEMENTS = "achievements"
 private const val ROUTE_STATS = "stats"
 private const val ROUTE_COACH_SETUP = "coach_setup"
+private const val ROUTE_CHAT = "coach_chat"
 private const val ROUTE_SHOP = "shop"
 
 @Composable
@@ -124,8 +126,10 @@ private fun MainScaffold(repository: AscendRepository) {
                     CoachScreen(
                         repository = repository,
                         onOpenSetup = { navController.navigate(ROUTE_COACH_SETUP) },
+                        onOpenChat = { navController.navigate(ROUTE_CHAT) },
                     )
                 }
+                composable(ROUTE_CHAT) { ChatScreen(repository = repository) }
                 composable(ROUTE_COACH_SETUP) { CoachSetupScreen(repository = repository) }
                 composable(ROUTE_SHOP) { ShopScreen(repository = repository) }
                 composable(Dest.Profile.route) {

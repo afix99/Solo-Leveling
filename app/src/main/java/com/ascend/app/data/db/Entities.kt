@@ -201,6 +201,8 @@ data class AiSettingsEntity(
     val equipment: String? = null,
     val dietaryNotes: String? = null,
     val injuries: String? = null,
+    /** In-character System voice vs plain coaching prose. */
+    val systemVoice: Boolean = true,
 ) {
     companion object {
         const val SINGLETON_ID = 0
@@ -214,5 +216,15 @@ data class CoachAdviceEntity(
     val adviceType: String,
     val content: String,
     val model: String,
+    val createdAtEpochMillis: Long,
+)
+
+/** One turn of the System chat. Kept so a conversation survives app restarts. */
+@Entity(tableName = "chat_messages")
+data class ChatMessageEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** "user" or "assistant", matching the wire format. */
+    val role: String,
+    val content: String,
     val createdAtEpochMillis: Long,
 )

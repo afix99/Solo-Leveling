@@ -137,6 +137,123 @@ class AiClient {
      * one asked for if auto-recovery kicked in. */
     data class ResolvedCompletion(val result: AiResult, val modelUsed: String)
 
+    /** One turn of a conversation. Role is "user" or "assistant". */
+    data class ChatTurn(val role: String, val content: String)
+
+    /**
+     * Multi-turn chat. Prior turns are replayed so follow-ups like "why?" or
+     * "make it easier" resolve against what was already said.
+     */
+    suspend fun chat(
+        provider: AiProvider,
+        apiKey: String,
+        model: String,
+        systemPrompt: String,
+        history: List<ChatTurn>,
+        timeoutMillis: Int = 60_000,
+    ): AiResult = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) {
+            return@withContext AiResult.Failure("No API key set. Add one in Coach → Setup.")
+        }
+        if (history.isEmpty()) {
+            return@withContext AiResult.Failure("Nothing to send.")
+        }
+
+        val resolvedModel = model.ifBlank { provider.defaultModel }
+        val url = if (provider.isNativeGemini) {
+            "${provider.endpoint}/$resolvedModel:generateContent"
+        } else {
+            provider.endpoint
+        }
+
+        var connection: HttpURLConnection? = null
+        try {
+            connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = timeoutMillis
+                readTimeout = timeoutMillis
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+                if (provider.isNativeGemini) {
+                    setRequestProperty("x-goog-api-key", apiKey)
+                } else {
+                    setRequestProperty("Authorization", "Bearer $apiKey")
+                }
+                if (provider == AiProvider.OPENROUTER) {
+                    setRequestProperty("HTTP-Referer", "https://github.com/afix99/Solo-Leveling")
+                    setRequestProperty("X-Title", "ASCEND")
+                }
+            }
+
+            val body = if (provider.isNativeGemini) {
+                JSONObject().apply {
+                    put(
+                        "contents",
+                        JSONArray().apply {
+                            history.forEach { turn ->
+                                put(
+                                    JSONObject()
+                                        // Gemini calls the assistant "model".
+                                        .put("role", if (turn.role == "assistant") "model" else "user")
+                                        .put(
+                                            "parts",
+                                            JSONArray().put(JSONObject().put("text", turn.content)),
+                                        ),
+                                )
+                            }
+                        },
+                    )
+                    put(
+                        "systemInstruction",
+                        JSONObject().put(
+                            "parts",
+                            JSONArray().put(JSONObject().put("text", systemPrompt)),
+                        ),
+                    )
+                    put("generationConfig", JSONObject().put("temperature", 0.7))
+                }.toString()
+            } else {
+                JSONObject().apply {
+                    put("model", resolvedModel)
+                    put("temperature", 0.7)
+                    put(
+                        "messages",
+                        JSONArray().apply {
+                            put(JSONObject().put("role", "system").put("content", systemPrompt))
+                            history.forEach {
+                                put(JSONObject().put("role", it.role).put("content", it.content))
+                            }
+                        },
+                    )
+                }.toString()
+            }
+
+            connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            val response = stream?.bufferedReader()?.use(BufferedReader::readText).orEmpty()
+
+            if (code !in 200..299) {
+                return@withContext AiResult.Failure(describeError(code, response))
+            }
+
+            val text = parseContent(response, provider.isNativeGemini)
+                ?: return@withContext AiResult.Failure(
+                    "Couldn't read the reply.\n\n" + response.take(300),
+                )
+            AiResult.Success(text.trim())
+        } catch (e: java.net.UnknownHostException) {
+            AiResult.Failure("No internet connection.")
+        } catch (e: java.net.SocketTimeoutException) {
+            AiResult.Failure("The request timed out. Free tiers can be slow — try again.")
+        } catch (e: Exception) {
+            AiResult.Failure(e.message ?: "Request failed.")
+        } finally {
+            connection?.disconnect()
+        }
+    }
+
     /**
      * Runs a completion and, if the model turns out to be unavailable, finds one
      * that works and retries once.

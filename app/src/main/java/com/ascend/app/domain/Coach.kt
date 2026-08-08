@@ -45,6 +45,33 @@ enum class AdviceType(
         blurb = "Recovery advice built around your wake/sleep habits and training load.",
         needsAthleteProfile = true,
     ),
+
+    // ---- Growth abilities ------------------------------------------------
+    APPRAISAL(
+        title = "Appraisal",
+        blurb = "Picks your weakest habit and dissects why it keeps failing.",
+        needsAthleteProfile = false,
+    ),
+    ASCENSION_PLAN(
+        title = "Ascension plan",
+        blurb = "A 90-day roadmap to your next Rank, with milestones you can check.",
+        needsAthleteProfile = false,
+    ),
+    GATE_DESIGN(
+        title = "Design a Gate",
+        blurb = "A custom challenge built around the thing you're worst at.",
+        needsAthleteProfile = false,
+    ),
+    DEBRIEF(
+        title = "Debrief a failure",
+        blurb = "Post-mortem on your broken streaks — what actually caused them.",
+        needsAthleteProfile = false,
+    ),
+    CLASS_ADVISOR(
+        title = "Job Change advice",
+        blurb = "Which class your data says you should take, and why.",
+        needsAthleteProfile = false,
+    ),
 }
 
 /** Optional body context. Everything is nullable — advice degrades gracefully. */

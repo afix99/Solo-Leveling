@@ -26,8 +26,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         GateRunEntity::class,
         AiSettingsEntity::class,
         CoachAdviceEntity::class,
+        ChatMessageEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -48,6 +49,7 @@ abstract class AscendDatabase : RoomDatabase() {
     abstract fun gateRunDao(): GateRunDao
     abstract fun aiSettingsDao(): AiSettingsDao
     abstract fun coachAdviceDao(): CoachAdviceDao
+    abstract fun chatMessageDao(): ChatMessageDao
 
     companion object {
         /**
@@ -191,6 +193,23 @@ abstract class AscendDatabase : RoomDatabase() {
             }
         }
 
+        /** v5 adds the System chat transcript. */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE ai_settings ADD COLUMN systemVoice INTEGER NOT NULL DEFAULT 1")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS chat_messages (
+                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        role TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        createdAtEpochMillis INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
         @Volatile private var instance: AscendDatabase? = null
 
         fun getInstance(context: Context): AscendDatabase =
@@ -200,7 +219,7 @@ abstract class AscendDatabase : RoomDatabase() {
                     AscendDatabase::class.java,
                     "ascend.db",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build()
                     .also { instance = it }
             }

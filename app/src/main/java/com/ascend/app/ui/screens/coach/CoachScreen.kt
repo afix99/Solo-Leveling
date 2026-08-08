@@ -45,7 +45,11 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 @Composable
-fun CoachScreen(repository: AscendRepository, onOpenSetup: () -> Unit) {
+fun CoachScreen(
+    repository: AscendRepository,
+    onOpenSetup: () -> Unit,
+    onOpenChat: () -> Unit,
+) {
     val vm: CoachViewModel = viewModel(factory = SimpleViewModelFactory { CoachViewModel(repository) })
     val history by vm.advice.collectAsStateWithLifecycle()
     // Collected so recomposition follows saved-settings changes; isConfigured
@@ -121,7 +125,28 @@ fun CoachScreen(repository: AscendRepository, onOpenSetup: () -> Unit) {
                 }
             }
 
-            item { Eyebrow("Ask for") }
+            item {
+                SystemPanel(accent = AscendColors.AccentViolet, modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenChat),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Eyebrow("Talk to the System", color = AscendColors.AccentViolet)
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "Ask anything. It already has your stats and adherence.",
+                                color = AscendColors.TextSecondary,
+                                fontSize = 12.sp,
+                            )
+                        }
+                        Text("→", color = AscendColors.AccentViolet, fontSize = 20.sp)
+                    }
+                }
+            }
+
+            item { Eyebrow("Reports", modifier = Modifier.padding(top = 6.dp)) }
 
             items(AdviceType.entries) { type ->
                 AdviceButton(

@@ -12,6 +12,7 @@ import com.ascend.app.data.db.RewardEntity
 import com.ascend.app.data.db.GateRunEntity
 import com.ascend.app.data.db.RewardPurchaseEntity
 import com.ascend.app.data.db.AiSettingsEntity
+import com.ascend.app.data.db.ChatMessageEntity
 import com.ascend.app.data.db.CoachAdviceEntity
 import com.ascend.app.data.db.ShadowEntity
 import com.ascend.app.data.db.StatProgressEntity
@@ -70,6 +71,7 @@ class AscendRepository(private val db: AscendDatabase) {
     private val gateRunDao = db.gateRunDao()
     private val aiSettingsDao = db.aiSettingsDao()
     private val coachAdviceDao = db.coachAdviceDao()
+    private val chatMessageDao = db.chatMessageDao()
 
     // ---- Observing state -------------------------------------------------
 
@@ -98,6 +100,7 @@ class AscendRepository(private val db: AscendDatabase) {
     fun observeGateHistory(): Flow<List<GateRunEntity>> = gateRunDao.observeHistory()
     fun observeAiSettings(): Flow<AiSettingsEntity?> = aiSettingsDao.observe()
     fun observeCoachAdvice(): Flow<List<CoachAdviceEntity>> = coachAdviceDao.observeAll()
+    fun observeChat(): Flow<List<ChatMessageEntity>> = chatMessageDao.observeAll()
 
     suspend fun getHunterProfile(): HunterProfileEntity = hunterProfileDao.get() ?: HunterProfileEntity()
 
@@ -776,6 +779,22 @@ class AscendRepository(private val db: AscendDatabase) {
         )
 
     suspend fun deleteAdvice(id: Long) = coachAdviceDao.delete(id)
+
+    suspend fun addChatMessage(role: String, content: String): Long =
+        chatMessageDao.insert(
+            ChatMessageEntity(
+                role = role,
+                content = content,
+                createdAtEpochMillis = System.currentTimeMillis(),
+            ),
+        )
+
+    /** Recent turns, oldest first. Capped so a long conversation can't grow
+     * past the model's context window or quietly inflate cost. */
+    suspend fun recentChat(limit: Int = 20): List<ChatMessageEntity> =
+        chatMessageDao.recent(limit).sortedBy { it.createdAtEpochMillis }
+
+    suspend fun clearChat() = chatMessageDao.clear()
 
     /**
      * Assembles the real numbers the coach reasons about. Nothing here is

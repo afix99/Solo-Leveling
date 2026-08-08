@@ -274,6 +274,38 @@ fun CoachSetupScreen(repository: AscendRepository) {
         }
 
         item {
+            GlassCard(accent = AscendColors.AccentViolet) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "System voice",
+                            color = AscendColors.TextPrimary,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 14.sp,
+                        )
+                        Text(
+                            "Answers arrive as clipped System notifications rather than plain " +
+                                "coaching prose. The advice underneath is identical either way.",
+                            color = AscendColors.TextTertiary,
+                            fontSize = 11.sp,
+                        )
+                    }
+                    androidx.compose.material3.Switch(
+                        checked = settings.systemVoice,
+                        onCheckedChange = { vm.setSystemVoice(it) },
+                        colors = androidx.compose.material3.SwitchDefaults.colors(
+                            checkedTrackColor = AscendColors.AccentViolet,
+                        ),
+                    )
+                }
+            }
+        }
+
+        item {
             Eyebrow("Body profile — optional", modifier = Modifier.padding(top = 6.dp))
         }
         item {
