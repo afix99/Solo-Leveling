@@ -189,7 +189,7 @@ export async function GET(request: Request): Promise<Response> {
     WHERE hunter_id = ${hunter.hunterId}
     ORDER BY taken_at DESC
     LIMIT 1
-  `) as Array<{
+  `) as unknown as Array<{
     taken_at: string;
     schema_version: number;
     app_version: string | null;

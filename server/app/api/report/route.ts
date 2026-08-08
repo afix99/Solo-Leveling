@@ -47,11 +47,14 @@ export async function GET(request: Request): Promise<Response> {
   // ---- Coverage: how much history is actually here --------------------
   const coverage = (await db`
     SELECT
-      MIN(date) AS first_day,
-      MAX(date) AS last_day,
+      -- Cast to text in SQL: the driver hydrates DATE into a JS Date, which
+      -- serialises as a full ISO timestamp. These end up in an AI prompt, so
+      -- "2026-04-11" is both correct and cheaper than the midnight-UTC form.
+      MIN(date)::text AS first_day,
+      MAX(date)::text AS last_day,
       COUNT(*)  AS days_recorded
     FROM daily_facts WHERE hunter_id = ${id}
-  `) as Row[];
+  `) as unknown as Row[];
 
   if (num(coverage[0]?.days_recorded) === 0) {
     return Response.json({
@@ -77,7 +80,7 @@ export async function GET(request: Request): Promise<Response> {
      AND d.date > CURRENT_DATE - w.span
     GROUP BY w.label, w.span
     ORDER BY w.span
-  `) as Row[];
+  `) as unknown as Row[];
 
   // ---- Which weekday actually breaks the streak ------------------------
   const weekdays = (await db`
@@ -91,7 +94,7 @@ export async function GET(request: Request): Promise<Response> {
     WHERE hunter_id = ${id} AND date > CURRENT_DATE - 90
     GROUP BY 1, 2
     ORDER BY 2
-  `) as Row[];
+  `) as unknown as Row[];
 
   // ---- Per-habit reliability, and whether it is decaying ---------------
   // Recent vs prior window on the same habit is the cheapest honest signal
@@ -115,7 +118,7 @@ export async function GET(request: Request): Promise<Response> {
     WHERE hunter_id = ${id}
     GROUP BY habit_name
     ORDER BY habit_name
-  `) as Row[];
+  `) as unknown as Row[];
 
   const habitReport = habits.map((h) => {
     const recent = pct(num(h.done_recent), num(h.days_recent));
@@ -162,7 +165,7 @@ export async function GET(request: Request): Promise<Response> {
       COALESCE(SUM(focus_minutes) FILTER (WHERE date <= CURRENT_DATE - 14
                                             AND date > CURRENT_DATE - 28), 0) AS prior_focus
     FROM daily_facts WHERE hunter_id = ${id}
-  `) as Row[];
+  `) as unknown as Row[];
 
   const m = momentum[0] ?? {};
   const recentRate = pct(num(m.recent_done), num(m.recent_total));
@@ -177,9 +180,9 @@ export async function GET(request: Request): Promise<Response> {
       FROM daily_facts
       WHERE hunter_id = ${id} AND perfect
     )
-    SELECT COUNT(*) AS length, MIN(date) AS started, MAX(date) AS ended
+    SELECT COUNT(*) AS length, MIN(date)::text AS started, MAX(date)::text AS ended
     FROM perfect GROUP BY grp ORDER BY length DESC LIMIT 3
-  `) as Row[];
+  `) as unknown as Row[];
 
   return Response.json({
     hasData: true,

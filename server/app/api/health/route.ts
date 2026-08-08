@@ -1,4 +1,4 @@
-import { hasDatabase } from "@/lib/db";
+import { databaseSource, hasDatabase } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -8,6 +8,7 @@ export async function GET(): Promise<Response> {
     ok: true,
     service: "am-system",
     databaseAttached: hasDatabase(),
+    databaseSource: databaseSource(),
     time: new Date().toISOString(),
   });
 }
