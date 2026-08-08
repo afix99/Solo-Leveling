@@ -1,5 +1,8 @@
 *.iml
 .gradle/
+# Kotlin compile-daemon logs. Build noise, and they capture the build
+# machine's proxy/JVM configuration.
+.kotlin/
 /local.properties
 /.idea/
 .DS_Store
