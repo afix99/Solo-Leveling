@@ -11,11 +11,16 @@ import com.ascend.app.data.db.LieTruthEntity
 import com.ascend.app.data.db.RewardEntity
 import com.ascend.app.data.db.GateRunEntity
 import com.ascend.app.data.db.RewardPurchaseEntity
+import com.ascend.app.data.db.AiSettingsEntity
+import com.ascend.app.data.db.CoachAdviceEntity
 import com.ascend.app.data.db.ShadowEntity
 import com.ascend.app.data.db.StatProgressEntity
 import com.ascend.app.data.db.UnlockedAchievementEntity
 import com.ascend.app.data.db.WeeklyReviewEntity
+import com.ascend.app.data.ai.CoachContext
+import com.ascend.app.data.ai.HabitSnapshot
 import com.ascend.app.domain.Achievement
+import com.ascend.app.domain.AthleteProfile
 import com.ascend.app.domain.Achievements
 import com.ascend.app.domain.DailyQuests
 import com.ascend.app.domain.DifficultyRating
@@ -63,6 +68,8 @@ class AscendRepository(private val db: AscendDatabase) {
     private val dailyQuestDao = db.dailyQuestDao()
     private val shadowDao = db.shadowDao()
     private val gateRunDao = db.gateRunDao()
+    private val aiSettingsDao = db.aiSettingsDao()
+    private val coachAdviceDao = db.coachAdviceDao()
 
     // ---- Observing state -------------------------------------------------
 
@@ -89,6 +96,8 @@ class AscendRepository(private val db: AscendDatabase) {
     fun observeShadows(): Flow<List<ShadowEntity>> = shadowDao.observeAll()
     fun observeActiveGate(): Flow<GateRunEntity?> = gateRunDao.observeActive()
     fun observeGateHistory(): Flow<List<GateRunEntity>> = gateRunDao.observeHistory()
+    fun observeAiSettings(): Flow<AiSettingsEntity?> = aiSettingsDao.observe()
+    fun observeCoachAdvice(): Flow<List<CoachAdviceEntity>> = coachAdviceDao.observeAll()
 
     suspend fun getHunterProfile(): HunterProfileEntity = hunterProfileDao.get() ?: HunterProfileEntity()
 
@@ -750,6 +759,87 @@ class AscendRepository(private val db: AscendDatabase) {
     }
 
     /** Wipes every table — used by Settings' "Reset data". Irreversible. */
+    // ---- AI coach -----------------------------------------------------------
+
+    suspend fun getAiSettings(): AiSettingsEntity = aiSettingsDao.get() ?: AiSettingsEntity()
+
+    suspend fun saveAiSettings(settings: AiSettingsEntity) = aiSettingsDao.upsert(settings)
+
+    suspend fun saveAdvice(type: String, content: String, model: String): Long =
+        coachAdviceDao.insert(
+            CoachAdviceEntity(
+                adviceType = type,
+                content = content,
+                model = model,
+                createdAtEpochMillis = System.currentTimeMillis(),
+            ),
+        )
+
+    suspend fun deleteAdvice(id: Long) = coachAdviceDao.delete(id)
+
+    /**
+     * Assembles the real numbers the coach reasons about. Nothing here is
+     * invented — every field comes from what has actually been logged, which is
+     * the difference between advice and a horoscope.
+     */
+    suspend fun buildCoachContext(today: LocalDate): CoachContext {
+        val profile = getHunterProfile()
+        val habits = habitDao.getActiveHabits()
+        val windowStart = today.minusDays(29)
+        val logs = dailyLogDao.getForRange(windowStart.toString(), today.toString())
+        val settings = getAiSettings()
+
+        val logsByHabit = logs.groupBy { it.habitId }
+        val snapshots = habits.map { habit ->
+            val habitLogs = logsByHabit[habit.id].orEmpty()
+            val completed = habitLogs.count { it.completed }
+            // Measured against days the habit actually has entries for, so one
+            // added yesterday doesn't read as 3% adherence.
+            val trackedDays = maxOf(habitLogs.size, 1)
+            HabitSnapshot(
+                name = habit.name,
+                stat = habit.stat,
+                isNonNegotiable = habit.isNonNegotiable,
+                completionRate = (completed * 100) / trackedDays,
+                currentStreak = dailyLogDao.longestStreakForHabit(habit.id),
+                focusMinutes = habit.targetDurationMinutes.takeIf { habit.isFocusEnabled },
+            )
+        }
+
+        val nonNegLogs = logs.filter { log -> habits.find { it.id == log.habitId }?.isNonNegotiable == true }
+        val completionRate = if (nonNegLogs.isNotEmpty()) {
+            (nonNegLogs.count { it.completed } * 100) / nonNegLogs.size
+        } else {
+            0
+        }
+
+        val totalXp = statProgressDao.getAll().sumOf { it.xp }
+        return CoachContext(
+            hunterName = profile.hunterName,
+            hunterLevel = Leveling.hunterLevelForTotalXp(totalXp),
+            rank = Leveling.rankForTotalXp(totalXp),
+            statLevels = statLevels(),
+            habits = snapshots,
+            perfectDays = profile.perfectDays,
+            longestStreak = dailyLogDao.longestStreak(),
+            focusSessions = focusSessionDao.completedCount(),
+            focusMinutes = focusSessionDao.completedMinutesTotal(),
+            missesLast30Days = nonNegLogs.count { !it.completed },
+            completionRateLast30 = completionRate,
+            athlete = AthleteProfile(
+                age = settings.age,
+                sex = settings.sex,
+                heightCm = settings.heightCm,
+                weightKg = settings.weightKg,
+                goal = settings.goal,
+                experience = settings.experience,
+                equipment = settings.equipment,
+                dietaryNotes = settings.dietaryNotes,
+                injuries = settings.injuries,
+            ),
+        )
+    }
+
     suspend fun resetAllData() = withContext(Dispatchers.IO) { db.clearAllTables() }
 
     // ---- Export -------------------------------------------------------------

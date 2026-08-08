@@ -24,8 +24,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DailyQuestEntity::class,
         ShadowEntity::class,
         GateRunEntity::class,
+        AiSettingsEntity::class,
+        CoachAdviceEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -44,6 +46,8 @@ abstract class AscendDatabase : RoomDatabase() {
     abstract fun dailyQuestDao(): DailyQuestDao
     abstract fun shadowDao(): ShadowDao
     abstract fun gateRunDao(): GateRunDao
+    abstract fun aiSettingsDao(): AiSettingsDao
+    abstract fun coachAdviceDao(): CoachAdviceDao
 
     companion object {
         /**
@@ -148,6 +152,45 @@ abstract class AscendDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v4 adds the AI coach: provider settings, the optional athlete profile,
+         * and cached advice so past answers stay readable offline.
+         */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS ai_settings (
+                        id INTEGER NOT NULL PRIMARY KEY,
+                        provider TEXT NOT NULL DEFAULT 'OPENROUTER',
+                        apiKey TEXT NOT NULL DEFAULT '',
+                        model TEXT NOT NULL DEFAULT '',
+                        age INTEGER,
+                        sex TEXT,
+                        heightCm INTEGER,
+                        weightKg INTEGER,
+                        goal TEXT,
+                        experience TEXT,
+                        equipment TEXT,
+                        dietaryNotes TEXT,
+                        injuries TEXT
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS coach_advice (
+                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        adviceType TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        model TEXT NOT NULL,
+                        createdAtEpochMillis INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
         @Volatile private var instance: AscendDatabase? = null
 
         fun getInstance(context: Context): AscendDatabase =
@@ -157,7 +200,7 @@ abstract class AscendDatabase : RoomDatabase() {
                     AscendDatabase::class.java,
                     "ascend.db",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                     .also { instance = it }
             }

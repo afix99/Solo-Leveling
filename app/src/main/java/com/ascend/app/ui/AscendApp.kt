@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.MoreHoriz
@@ -34,6 +35,8 @@ import com.ascend.app.domain.Leveling
 import com.ascend.app.ui.components.DockItem
 import com.ascend.app.ui.components.SystemDock
 import com.ascend.app.ui.screens.achievements.AchievementsScreen
+import com.ascend.app.ui.screens.coach.CoachScreen
+import com.ascend.app.ui.screens.coach.CoachSetupScreen
 import com.ascend.app.ui.screens.habits.HabitsScreen
 import com.ascend.app.ui.screens.help.HowItWorksScreen
 import com.ascend.app.ui.screens.liestruths.LieTruthScreen
@@ -50,16 +53,19 @@ private sealed class Dest(val route: String, val label: String, val icon: ImageV
     data object Today : Dest("today", "Today", Icons.Default.TaskAlt)
     data object System : Dest("system", "System", Icons.Default.Equalizer)
     data object Habits : Dest("habits", "Habits", Icons.Default.Checklist)
+    data object Coach : Dest("coach", "Coach", Icons.Default.AutoAwesome)
     data object Shop : Dest("shop", "Shop", Icons.Default.Storefront)
     data object Profile : Dest("profile", "More", Icons.Default.MoreHoriz)
 }
 
-private val bottomTabs = listOf(Dest.Today, Dest.System, Dest.Habits, Dest.Shop, Dest.Profile)
+private val bottomTabs = listOf(Dest.Today, Dest.System, Dest.Habits, Dest.Coach, Dest.Profile)
 private const val ROUTE_LIES_TRUTHS = "lies_truths"
 private const val ROUTE_HOW_IT_WORKS = "how_it_works"
 private const val ROUTE_WEEKLY_REVIEW = "weekly_review"
 private const val ROUTE_ACHIEVEMENTS = "achievements"
 private const val ROUTE_STATS = "stats"
+private const val ROUTE_COACH_SETUP = "coach_setup"
+private const val ROUTE_SHOP = "shop"
 
 @Composable
 fun AscendApp(repository: AscendRepository) {
@@ -114,7 +120,14 @@ private fun MainScaffold(repository: AscendRepository) {
                 composable(Dest.System.route) { SystemScreen(repository = repository) }
                 composable(ROUTE_STATS) { StatsScreen(repository = repository) }
                 composable(Dest.Habits.route) { HabitsScreen(repository = repository) }
-                composable(Dest.Shop.route) { ShopScreen(repository = repository) }
+                composable(Dest.Coach.route) {
+                    CoachScreen(
+                        repository = repository,
+                        onOpenSetup = { navController.navigate(ROUTE_COACH_SETUP) },
+                    )
+                }
+                composable(ROUTE_COACH_SETUP) { CoachSetupScreen(repository = repository) }
+                composable(ROUTE_SHOP) { ShopScreen(repository = repository) }
                 composable(Dest.Profile.route) {
                     ProfileScreen(
                         repository = repository,
@@ -123,6 +136,7 @@ private fun MainScaffold(repository: AscendRepository) {
                         onOpenWeeklyReview = { navController.navigate(ROUTE_WEEKLY_REVIEW) },
                         onOpenAchievements = { navController.navigate(ROUTE_ACHIEVEMENTS) },
                         onOpenStats = { navController.navigate(ROUTE_STATS) },
+                        onOpenShop = { navController.navigate(ROUTE_SHOP) },
                     )
                 }
                 composable(ROUTE_WEEKLY_REVIEW) { WeeklyReviewScreen(repository = repository) }

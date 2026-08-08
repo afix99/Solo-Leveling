@@ -176,3 +176,43 @@ data class GateRunEntity(
     /** ISO date of the last day already counted, so a run advances once per day. */
     val lastEvaluatedDate: String? = null,
 )
+
+/**
+ * AI coach configuration and the optional body profile that makes training and
+ * nutrition advice specific. Single row, like the hunter profile.
+ *
+ * The API key lives in app-private storage. That is sandboxed from other apps
+ * on a non-rooted device, but it is not encrypted at rest — worth knowing
+ * before pasting in a key that bills you.
+ */
+@Entity(tableName = "ai_settings")
+data class AiSettingsEntity(
+    @PrimaryKey val id: Int = SINGLETON_ID,
+    val provider: String = "OPENROUTER",
+    val apiKey: String = "",
+    val model: String = "",
+    // Optional athlete profile — all nullable, advice degrades gracefully.
+    val age: Int? = null,
+    val sex: String? = null,
+    val heightCm: Int? = null,
+    val weightKg: Int? = null,
+    val goal: String? = null,
+    val experience: String? = null,
+    val equipment: String? = null,
+    val dietaryNotes: String? = null,
+    val injuries: String? = null,
+) {
+    companion object {
+        const val SINGLETON_ID = 0
+    }
+}
+
+/** Advice is cached so it stays readable with no connection. */
+@Entity(tableName = "coach_advice")
+data class CoachAdviceEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val adviceType: String,
+    val content: String,
+    val model: String,
+    val createdAtEpochMillis: Long,
+)

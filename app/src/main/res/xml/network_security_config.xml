@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- ASCEND is fully offline; this explicitly denies all cleartext and blocks
-     network use even if a dependency attempts it. -->
+<!-- Cleartext stays blocked outright. The only outbound traffic ASCEND makes is
+     the optional AI Coach calling the provider the user configured, over HTTPS. -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false" />
 </network-security-config>

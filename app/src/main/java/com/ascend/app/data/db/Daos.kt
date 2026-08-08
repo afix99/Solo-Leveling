@@ -253,3 +253,30 @@ interface GateRunDao {
     @Update
     suspend fun update(entity: GateRunEntity)
 }
+
+@Dao
+interface AiSettingsDao {
+    @Query("SELECT * FROM ai_settings WHERE id = ${AiSettingsEntity.SINGLETON_ID}")
+    fun observe(): Flow<AiSettingsEntity?>
+
+    @Query("SELECT * FROM ai_settings WHERE id = ${AiSettingsEntity.SINGLETON_ID}")
+    suspend fun get(): AiSettingsEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(entity: AiSettingsEntity)
+}
+
+@Dao
+interface CoachAdviceDao {
+    @Query("SELECT * FROM coach_advice ORDER BY createdAtEpochMillis DESC")
+    fun observeAll(): Flow<List<CoachAdviceEntity>>
+
+    @Query("SELECT * FROM coach_advice WHERE adviceType = :type ORDER BY createdAtEpochMillis DESC LIMIT 1")
+    suspend fun latestFor(type: String): CoachAdviceEntity?
+
+    @Insert
+    suspend fun insert(entity: CoachAdviceEntity): Long
+
+    @Query("DELETE FROM coach_advice WHERE id = :id")
+    suspend fun delete(id: Long)
+}
