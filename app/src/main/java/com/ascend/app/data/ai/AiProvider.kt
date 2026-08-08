@@ -15,6 +15,11 @@ enum class AiProvider(
     val defaultModel: String,
     val signupUrl: String,
     val notes: String,
+    /** How this provider's keys begin, used to catch a key pasted under the
+     * wrong provider before it fails with a confusing 401. */
+    val keyPrefixes: List<String>,
+    /** Offered as chips so a model ID never has to be typed by hand. */
+    val commonModels: List<String>,
 ) {
     OPENROUTER(
         displayName = "OpenRouter",
@@ -22,6 +27,13 @@ enum class AiProvider(
         defaultModel = "deepseek/deepseek-chat-v3-0324:free",
         signupUrl = "https://openrouter.ai/keys",
         notes = "Free tier, many models behind one key. Models ending in :free cost nothing.",
+        keyPrefixes = listOf("sk-or-"),
+        commonModels = listOf(
+            "deepseek/deepseek-chat-v3-0324:free",
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "google/gemma-3-27b-it:free",
+            "qwen/qwen3-235b-a22b:free",
+        ),
     ),
     DEEPSEEK(
         displayName = "DeepSeek",
@@ -29,6 +41,8 @@ enum class AiProvider(
         defaultModel = "deepseek-chat",
         signupUrl = "https://platform.deepseek.com/api_keys",
         notes = "Very cheap rather than free. Needs credit on the account.",
+        keyPrefixes = listOf("sk-"),
+        commonModels = listOf("deepseek-chat", "deepseek-reasoner"),
     ),
     GROQ(
         displayName = "Groq",
@@ -36,6 +50,12 @@ enum class AiProvider(
         defaultModel = "llama-3.3-70b-versatile",
         signupUrl = "https://console.groq.com/keys",
         notes = "Free tier with generous daily limits. Fastest responses.",
+        keyPrefixes = listOf("gsk_"),
+        commonModels = listOf(
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "openai/gpt-oss-120b",
+        ),
     ),
     GEMINI(
         displayName = "Google Gemini",
@@ -43,5 +63,24 @@ enum class AiProvider(
         defaultModel = "gemini-2.5-flash",
         signupUrl = "https://aistudio.google.com/apikey",
         notes = "Free tier, no card needed. Key issued instantly from AI Studio.",
+        keyPrefixes = listOf("AIza"),
+        commonModels = listOf("gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"),
     ),
+    ;
+
+    fun looksLikeMyKey(key: String): Boolean =
+        keyPrefixes.any { key.trim().startsWith(it) }
+
+    companion object {
+        /**
+         * Best guess at which provider a key belongs to. DeepSeek's plain "sk-"
+         * is checked last because OpenRouter's "sk-or-" also starts with it.
+         */
+        fun detectFromKey(key: String): AiProvider? {
+            val trimmed = key.trim()
+            if (trimmed.isBlank()) return null
+            return entries.firstOrNull { it != DEEPSEEK && it.looksLikeMyKey(trimmed) }
+                ?: DEEPSEEK.takeIf { it.looksLikeMyKey(trimmed) }
+        }
+    }
 }

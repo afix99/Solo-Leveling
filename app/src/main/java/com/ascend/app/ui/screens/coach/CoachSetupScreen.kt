@@ -58,7 +58,14 @@ fun CoachSetupScreen(repository: AscendRepository) {
         mutableStateOf(runCatching { AiProvider.valueOf(settings.provider) }.getOrDefault(AiProvider.OPENROUTER))
     }
     var apiKey by remember(settings.apiKey) { mutableStateOf(settings.apiKey) }
-    var model by remember(settings.model) { mutableStateOf(settings.model) }
+    // Older builds let the model be typed freely, so a stored value that isn't a
+    // real model id for this provider is repaired rather than left to 401.
+    var model by remember(settings.model, settings.provider) {
+        val stored = settings.model
+        val current = runCatching { AiProvider.valueOf(settings.provider) }
+            .getOrDefault(AiProvider.OPENROUTER)
+        mutableStateOf(if (stored in current.commonModels) stored else current.defaultModel)
+    }
 
     var age by remember(settings.age) { mutableStateOf(settings.age?.toString() ?: "") }
     var sex by remember(settings.sex) { mutableStateOf(settings.sex ?: "") }
@@ -109,7 +116,17 @@ fun CoachSetupScreen(repository: AscendRepository) {
             }
         }
 
-        item { Eyebrow("Provider") }
+        item {
+            Column {
+                Eyebrow("Step 1 — pick where your key came from")
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "These are separate companies. A key from one will not work on another.",
+                    color = AscendColors.TextTertiary,
+                    fontSize = 11.sp,
+                )
+            }
+        }
 
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -127,12 +144,23 @@ fun CoachSetupScreen(repository: AscendRepository) {
                             if (wasDefault) model = p.defaultModel
                         },
                     ) {
-                        Text(
-                            p.displayName,
-                            color = if (selected) AscendColors.AccentBlue else AscendColors.TextPrimary,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 15.sp,
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                p.displayName,
+                                color = if (selected) AscendColors.AccentBlue else AscendColors.TextPrimary,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 15.sp,
+                            )
+                            Text(
+                                if (selected) "SELECTED" else "TAP TO USE",
+                                color = if (selected) AscendColors.AccentBlue else AscendColors.TextTertiary,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
                         Text(p.notes, color = AscendColors.TextTertiary, fontSize = 11.sp)
                         Spacer(Modifier.height(6.dp))
                         Text(
@@ -154,28 +182,53 @@ fun CoachSetupScreen(repository: AscendRepository) {
                 OutlinedTextField(
                     value = apiKey,
                     onValueChange = { apiKey = it },
-                    label = { Text("API key") },
-                    placeholder = { Text("sk-...") },
+                    label = { Text("Step 2 — paste your API key") },
+                    placeholder = { Text("paste the key from your provider") },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth(),
                     colors = fieldColors(),
                 )
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(
-                    value = model,
-                    onValueChange = { model = it },
-                    label = { Text("Model") },
-                    placeholder = { Text(provider.defaultModel) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = fieldColors(),
-                )
+
+                // Keys are recognisable by prefix, so a key pasted under the
+                // wrong provider is caught here instead of coming back as a
+                // baffling 401.
+                val detected = AiProvider.detectFromKey(apiKey)
+                if (detected != null && detected != provider) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "That looks like a ${detected.displayName} key, but " +
+                            "${provider.displayName} is selected. They are different " +
+                            "services — a key from one will not work on the other.",
+                        color = AscendColors.Amber,
+                        fontSize = 11.sp,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Switch to ${detected.displayName}",
+                        color = AscendColors.Amber,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        modifier = Modifier.clickable {
+                            provider = detected
+                            model = detected.defaultModel
+                        },
+                    )
+                }
+
+                Spacer(Modifier.height(16.dp))
+                Eyebrow("Model")
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Leave blank to use ${provider.defaultModel}",
+                    "Which AI model answers you — not a name for your key.",
                     color = AscendColors.TextTertiary,
                     fontSize = 10.sp,
+                )
+                Spacer(Modifier.height(8.dp))
+                ModelChips(
+                    provider = provider,
+                    selected = model.ifBlank { provider.defaultModel },
+                    onSelect = { model = it },
                 )
             }
         }
@@ -310,6 +363,31 @@ fun CoachSetupScreen(repository: AscendRepository) {
                     "model shows up here instead of failing later.",
                 color = AscendColors.TextTertiary,
                 fontSize = 10.sp,
+            )
+        }
+    }
+}
+
+/** Model IDs are exact strings the provider must recognise, so they're picked
+ * from a list rather than typed. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun ModelChips(provider: AiProvider, selected: String, onSelect: (String) -> Unit) {
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        provider.commonModels.forEach { candidate ->
+            FilterChip(
+                selected = selected == candidate,
+                onClick = { onSelect(candidate) },
+                label = { Text(candidate, fontSize = 10.sp) },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = AscendColors.AccentBlue.copy(alpha = 0.22f),
+                    selectedLabelColor = AscendColors.AccentBlue,
+                    containerColor = AscendColors.SurfaceElevated,
+                    labelColor = AscendColors.TextSecondary,
+                ),
             )
         }
     }
