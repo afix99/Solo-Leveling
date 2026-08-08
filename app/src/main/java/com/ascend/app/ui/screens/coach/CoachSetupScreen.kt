@@ -17,6 +17,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
@@ -36,6 +37,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ascend.app.data.ai.AiProvider
 import com.ascend.app.data.repo.AscendRepository
@@ -50,7 +52,7 @@ import com.ascend.app.ui.theme.AscendColors
 fun CoachSetupScreen(repository: AscendRepository) {
     val vm: CoachViewModel = viewModel(factory = SimpleViewModelFactory { CoachViewModel(repository) })
     val uriHandler = LocalUriHandler.current
-    val settings = vm.settings
+    val settings by vm.settingsFlow.collectAsStateWithLifecycle()
 
     var provider by remember(settings.provider) {
         mutableStateOf(runCatching { AiProvider.valueOf(settings.provider) }.getOrDefault(AiProvider.OPENROUTER))
@@ -116,8 +118,13 @@ fun CoachSetupScreen(repository: AscendRepository) {
                     GlassCard(
                         accent = if (selected) AscendColors.AccentBlue else AscendColors.Divider,
                         modifier = Modifier.clickable {
+                            // Carry the model across only if it was hand-typed;
+                            // otherwise a provider swap would send the previous
+                            // provider's model id and fail with a 404.
+                            val wasDefault = model.isBlank() ||
+                                AiProvider.entries.any { it.defaultModel == model }
                             provider = p
-                            if (model.isBlank()) model = p.defaultModel
+                            if (wasDefault) model = p.defaultModel
                         },
                     ) {
                         Text(
@@ -231,6 +238,32 @@ fun CoachSetupScreen(repository: AscendRepository) {
             }
         }
 
+        vm.testResult?.let { result ->
+            item {
+                GlassCard(
+                    accent = if (result.startsWith("Connected")) AscendColors.Success else AscendColors.Danger,
+                    modifier = Modifier.clickable { vm.clearTestResult() },
+                ) {
+                    Text(
+                        result,
+                        color = if (result.startsWith("Connected")) AscendColors.Success else AscendColors.Danger,
+                        fontSize = 12.sp,
+                    )
+                    Text("Tap to dismiss", color = AscendColors.TextTertiary, fontSize = 10.sp)
+                }
+            }
+        }
+
+        item {
+            if (settings.apiKey.isNotBlank()) {
+                Text(
+                    "Saved key ends in \u2026${settings.apiKey.takeLast(4)}",
+                    color = AscendColors.Success,
+                    fontSize = 11.sp,
+                )
+            }
+        }
+
         item {
             Button(
                 onClick = {
@@ -257,6 +290,27 @@ fun CoachSetupScreen(repository: AscendRepository) {
             ) {
                 Text(if (saved) "Saved" else "Save", modifier = Modifier.padding(vertical = 4.dp))
             }
+        }
+
+        item {
+            OutlinedButton(
+                onClick = { vm.testConnection() },
+                enabled = !vm.testing,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    if (vm.testing) "Testing\u2026" else "Test connection",
+                    color = AscendColors.TextPrimary,
+                    modifier = Modifier.padding(vertical = 4.dp),
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Save first, then test. This sends one tiny request so a wrong key or " +
+                    "model shows up here instead of failing later.",
+                color = AscendColors.TextTertiary,
+                fontSize = 10.sp,
+            )
         }
     }
 }

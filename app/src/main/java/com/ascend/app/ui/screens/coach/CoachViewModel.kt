@@ -16,6 +16,7 @@ import com.ascend.app.domain.AdviceType
 import java.time.LocalDate
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -27,40 +28,43 @@ class CoachViewModel(private val repository: AscendRepository) : ViewModel() {
         repository.observeCoachAdvice()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    var settings by mutableStateOf(AiSettingsEntity())
-        private set
+    /**
+     * Observed rather than read once at construction.
+     *
+     * Coach and Coach Setup are separate nav destinations, so each gets its own
+     * ViewModel instance. A one-shot read meant the Coach screen kept the empty
+     * settings it loaded before setup ran, and then sent a blank key.
+     */
+    val settingsFlow: StateFlow<AiSettingsEntity> =
+        repository.observeAiSettings()
+            .map { it ?: AiSettingsEntity() }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AiSettingsEntity())
 
-    var isConfigured by mutableStateOf(false)
-        private set
+    val settings: AiSettingsEntity get() = settingsFlow.value
 
-    /** Which advice type is currently generating, if any. */
+    val isConfigured: Boolean get() = settings.apiKey.isNotBlank()
+
+    val provider: AiProvider
+        get() = runCatching { AiProvider.valueOf(settings.provider) }.getOrDefault(AiProvider.OPENROUTER)
+
     var generating by mutableStateOf<AdviceType?>(null)
         private set
 
     var error by mutableStateOf<String?>(null)
         private set
 
-    /** The freshly generated answer, shown before it drops into the history list. */
     var latest by mutableStateOf<Pair<AdviceType, String>?>(null)
         private set
 
-    init {
-        viewModelScope.launch { reloadSettings() }
-    }
+    /** Result of the last connection test, so setup can be verified on the spot. */
+    var testResult by mutableStateOf<String?>(null)
+        private set
 
-    private suspend fun reloadSettings() {
-        settings = repository.getAiSettings()
-        isConfigured = settings.apiKey.isNotBlank()
-    }
-
-    val provider: AiProvider
-        get() = runCatching { AiProvider.valueOf(settings.provider) }.getOrDefault(AiProvider.OPENROUTER)
+    var testing by mutableStateOf(false)
+        private set
 
     fun saveSettings(updated: AiSettingsEntity) {
-        viewModelScope.launch {
-            repository.saveAiSettings(updated)
-            reloadSettings()
-        }
+        viewModelScope.launch { repository.saveAiSettings(updated) }
     }
 
     fun generate(type: AdviceType) {
@@ -70,18 +74,67 @@ class CoachViewModel(private val repository: AscendRepository) : ViewModel() {
             error = null
             latest = null
 
+            // Read straight from storage rather than trusting cached state —
+            // this is the call that has to be right.
+            val current = repository.getAiSettings()
+            val activeProvider = runCatching { AiProvider.valueOf(current.provider) }
+                .getOrDefault(AiProvider.OPENROUTER)
+            val model = current.model.ifBlank { activeProvider.defaultModel }
+
+            if (current.apiKey.isBlank()) {
+                error = "No API key saved. Open Setup, paste your key, and tap Save."
+                generating = null
+                return@launch
+            }
+
             val ctx = repository.buildCoachContext(LocalDate.now())
             val (system, user) = CoachPrompts.build(type, ctx)
-            val model = settings.model.ifBlank { provider.defaultModel }
 
-            when (val result = client.complete(provider, settings.apiKey, model, system, user)) {
+            when (val result = client.complete(activeProvider, current.apiKey, model, system, user)) {
                 is AiResult.Success -> {
                     repository.saveAdvice(type.name, result.text, model)
                     latest = type to result.text
                 }
-                is AiResult.Failure -> error = result.message
+                is AiResult.Failure ->
+                    error = "${result.message}\n\n(${activeProvider.displayName} · $model)"
             }
             generating = null
+        }
+    }
+
+    /** Cheapest possible round trip, so a bad key or model is caught immediately. */
+    fun testConnection() {
+        if (testing) return
+        viewModelScope.launch {
+            testing = true
+            testResult = null
+
+            val current = repository.getAiSettings()
+            val activeProvider = runCatching { AiProvider.valueOf(current.provider) }
+                .getOrDefault(AiProvider.OPENROUTER)
+            val model = current.model.ifBlank { activeProvider.defaultModel }
+
+            testResult = when {
+                current.apiKey.isBlank() ->
+                    "No key saved yet. Paste your key and tap Save first."
+
+                else -> when (
+                    val result = client.complete(
+                        provider = activeProvider,
+                        apiKey = current.apiKey,
+                        model = model,
+                        systemPrompt = "You are a connection test. Reply with exactly: OK",
+                        userPrompt = "Reply with exactly: OK",
+                        timeoutMillis = 30_000,
+                    )
+                ) {
+                    is AiResult.Success ->
+                        "Connected. ${activeProvider.displayName} replied using $model."
+                    is AiResult.Failure ->
+                        "Failed: ${result.message}\n\n(${activeProvider.displayName} · $model)"
+                }
+            }
+            testing = false
         }
     }
 
@@ -91,6 +144,10 @@ class CoachViewModel(private val repository: AscendRepository) : ViewModel() {
 
     fun clearError() {
         error = null
+    }
+
+    fun clearTestResult() {
+        testResult = null
     }
 
     fun dismissLatest() {

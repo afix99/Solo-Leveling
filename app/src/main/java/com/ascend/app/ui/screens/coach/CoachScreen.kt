@@ -48,6 +48,9 @@ import java.time.format.DateTimeFormatter
 fun CoachScreen(repository: AscendRepository, onOpenSetup: () -> Unit) {
     val vm: CoachViewModel = viewModel(factory = SimpleViewModelFactory { CoachViewModel(repository) })
     val history by vm.advice.collectAsStateWithLifecycle()
+    // Collected so recomposition follows saved-settings changes; isConfigured
+    // reads through to this.
+    val settings by vm.settingsFlow.collectAsStateWithLifecycle()
     var expandedId by remember { mutableStateOf<Long?>(null) }
 
     Column(modifier = Modifier.fillMaxSize().background(AscendColors.Background)) {
@@ -70,7 +73,7 @@ fun CoachScreen(repository: AscendRepository, onOpenSetup: () -> Unit) {
             contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 10.dp, bottom = 30.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            if (!vm.isConfigured) {
+            if (settings.apiKey.isBlank()) {
                 item {
                     SystemPanel(accent = AscendColors.Amber, modifier = Modifier.fillMaxWidth()) {
                         Eyebrow("Not connected", color = AscendColors.Amber)
@@ -111,7 +114,7 @@ fun CoachScreen(repository: AscendRepository, onOpenSetup: () -> Unit) {
             items(AdviceType.entries) { type ->
                 AdviceButton(
                     type = type,
-                    enabled = vm.isConfigured && vm.generating == null,
+                    enabled = settings.apiKey.isNotBlank() && vm.generating == null,
                     loading = vm.generating == type,
                     onClick = { vm.generate(type) },
                 )
