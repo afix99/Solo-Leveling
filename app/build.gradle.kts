@@ -13,8 +13,8 @@ android {
         applicationId = "com.ascend.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 11
-        versionName = "4.5"
+        versionCode = 12
+        versionName = "4.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -79,6 +79,10 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
     testImplementation("junit:junit:4.13.2")
+    // Android stubs org.json in unit tests, so every JSON class silently returns
+    // defaults and parsing code appears to work while doing nothing. This pulls
+    // in the real implementation so the parsers are genuinely exercised.
+    testImplementation("org.json:json:20240303")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")

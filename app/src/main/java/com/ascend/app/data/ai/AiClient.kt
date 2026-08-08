@@ -40,15 +40,26 @@ class AiClient {
             return@withContext AiResult.Failure("No API key set. Add one in Coach → Setup.")
         }
 
+        val resolvedModel = model.ifBlank { provider.defaultModel }
+        val url = if (provider.isNativeGemini) {
+            "${provider.endpoint}/$resolvedModel:generateContent"
+        } else {
+            provider.endpoint
+        }
+
         var connection: HttpURLConnection? = null
         try {
-            connection = (URL(provider.endpoint).openConnection() as HttpURLConnection).apply {
+            connection = (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = timeoutMillis
                 readTimeout = timeoutMillis
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("Authorization", "Bearer $apiKey")
+                if (provider.isNativeGemini) {
+                    setRequestProperty("x-goog-api-key", apiKey)
+                } else {
+                    setRequestProperty("Authorization", "Bearer $apiKey")
+                }
                 if (provider == AiProvider.OPENROUTER) {
                     // OpenRouter attributes traffic by these; harmless elsewhere.
                     setRequestProperty("HTTP-Referer", "https://github.com/afix99/Solo-Leveling")
@@ -61,17 +72,39 @@ class AiClient {
                 return@withContext AiResult.Failure("Refusing to send data over a non-HTTPS connection.")
             }
 
-            val body = JSONObject().apply {
-                put("model", model.ifBlank { provider.defaultModel })
-                put("temperature", 0.7)
-                put(
-                    "messages",
-                    JSONArray().apply {
-                        put(JSONObject().put("role", "system").put("content", systemPrompt))
-                        put(JSONObject().put("role", "user").put("content", userPrompt))
-                    },
-                )
-            }.toString()
+            val body = if (provider.isNativeGemini) {
+                JSONObject().apply {
+                    put(
+                        "contents",
+                        JSONArray().put(
+                            JSONObject().put(
+                                "parts",
+                                JSONArray().put(JSONObject().put("text", userPrompt)),
+                            ),
+                        ),
+                    )
+                    put(
+                        "systemInstruction",
+                        JSONObject().put(
+                            "parts",
+                            JSONArray().put(JSONObject().put("text", systemPrompt)),
+                        ),
+                    )
+                    put("generationConfig", JSONObject().put("temperature", 0.7))
+                }.toString()
+            } else {
+                JSONObject().apply {
+                    put("model", resolvedModel)
+                    put("temperature", 0.7)
+                    put(
+                        "messages",
+                        JSONArray().apply {
+                            put(JSONObject().put("role", "system").put("content", systemPrompt))
+                            put(JSONObject().put("role", "user").put("content", userPrompt))
+                        },
+                    )
+                }.toString()
+            }
 
             connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
 
@@ -83,8 +116,11 @@ class AiClient {
                 return@withContext AiResult.Failure(describeError(code, response))
             }
 
-            val text = parseContent(response)
-                ?: return@withContext AiResult.Failure("The provider returned an empty response.")
+            val text = parseContent(response, provider.isNativeGemini)
+                ?: return@withContext AiResult.Failure(
+                    "The provider returned a response I couldn't read.\n\n" +
+                        response.take(300),
+                )
             AiResult.Success(text.trim())
         } catch (e: java.net.UnknownHostException) {
             AiResult.Failure("No internet connection.")
@@ -123,18 +159,36 @@ class AiClient {
         val failure = first as AiResult.Failure
         if (!isModelProblem(failure.message)) return ResolvedCompletion(first, model)
 
+        // Every branch below reports what recovery actually did. Returning the
+        // original error made a failed retry indistinguishable from no retry,
+        // which hid the real cause through several rounds of debugging.
         val listed = listModels(provider, apiKey)
-        if (listed !is ModelListResult.Success) return ResolvedCompletion(first, model)
+        if (listed !is ModelListResult.Success) {
+            val why = (listed as ModelListResult.Failure).message
+            return ResolvedCompletion(
+                AiResult.Failure("${failure.message}\n\nCouldn't list alternatives: $why"),
+                model,
+            )
+        }
 
         val replacement = pickBestModel(provider, listed.models, exclude = model)
-            ?: return ResolvedCompletion(first, model)
+            ?: return ResolvedCompletion(
+                AiResult.Failure(
+                    "${failure.message}\n\nNo usable chat model found among " +
+                        "${listed.models.size} offered by this key.",
+                ),
+                model,
+            )
 
-        val second = complete(provider, apiKey, replacement, systemPrompt, userPrompt)
-        return if (second is AiResult.Success) {
-            ResolvedCompletion(second, replacement)
-        } else {
-            // Report the original failure — it describes the model the user chose.
-            ResolvedCompletion(first, model)
+        return when (val second = complete(provider, apiKey, replacement, systemPrompt, userPrompt)) {
+            is AiResult.Success -> ResolvedCompletion(second, replacement)
+            is AiResult.Failure -> ResolvedCompletion(
+                AiResult.Failure(
+                    "Tried $model, then $replacement. Both failed.\n\n" +
+                        "First: ${failure.message}\n\nSecond: ${second.message}",
+                ),
+                replacement,
+            )
         }
     }
 
@@ -188,11 +242,20 @@ class AiClient {
 
         var connection: HttpURLConnection? = null
         try {
-            connection = (URL(provider.modelsEndpoint).openConnection() as HttpURLConnection).apply {
+            val listUrl = if (provider.isNativeGemini) {
+                "${provider.modelsEndpoint}?pageSize=200"
+            } else {
+                provider.modelsEndpoint
+            }
+            connection = (URL(listUrl).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 connectTimeout = timeoutMillis
                 readTimeout = timeoutMillis
-                setRequestProperty("Authorization", "Bearer $apiKey")
+                if (provider.isNativeGemini) {
+                    setRequestProperty("x-goog-api-key", apiKey)
+                } else {
+                    setRequestProperty("Authorization", "Bearer $apiKey")
+                }
             }
 
             val code = connection.responseCode
@@ -213,6 +276,17 @@ class AiClient {
             val ids = buildList {
                 for (i in 0 until array.length()) {
                     val item = array.optJSONObject(i) ?: continue
+
+                    // Google reports what each model can do, so models that
+                    // can't generate text are excluded on fact rather than by
+                    // guessing from the name.
+                    if (provider.isNativeGemini) {
+                        val methods = item.optJSONArray("supportedGenerationMethods")
+                        val supportsGeneration = (0 until (methods?.length() ?: 0))
+                            .any { methods?.optString(it) == "generateContent" }
+                        if (!supportsGeneration) continue
+                    }
+
                     val id = item.optString("id").ifBlank { item.optString("name") }
                     if (id.isNotBlank()) add(id.removePrefix("models/"))
                 }
@@ -232,20 +306,27 @@ class AiClient {
         }
     }
 
-    private fun parseContent(response: String): String? = runCatching {
-        JSONObject(response)
-            .getJSONArray("choices")
-            .getJSONObject(0)
-            .getJSONObject("message")
-            .getString("content")
+    private fun parseContent(response: String, nativeGemini: Boolean): String? = runCatching {
+        if (nativeGemini) {
+            JSONObject(response)
+                .getJSONArray("candidates")
+                .getJSONObject(0)
+                .getJSONObject("content")
+                .getJSONArray("parts")
+                .getJSONObject(0)
+                .getString("text")
+        } else {
+            JSONObject(response)
+                .getJSONArray("choices")
+                .getJSONObject(0)
+                .getJSONObject("message")
+                .getString("content")
+        }
     }.getOrNull()
 
     /** Turns provider error bodies into something a user can act on. */
-    private fun describeError(code: Int, body: String): String {
-        val detail = runCatching {
-            val error = JSONObject(body).optJSONObject("error")
-            error?.optString("message").takeUnless { it.isNullOrBlank() }
-        }.getOrNull()
+    internal fun describeError(code: Int, body: String): String {
+        val detail = extractErrorMessage(body)
 
         // The provider's own message is always appended when present — swallowing
         // it cost several rounds of guessing at what "not found" actually meant.
@@ -259,6 +340,33 @@ class AiClient {
             else -> "Request failed (HTTP $code)."
         }
         return if (detail.isNullOrBlank()) friendly else "$friendly\n\n$detail"
+    }
+
+    /**
+     * Pulls the provider's own explanation out of an error body.
+     *
+     * Google's compatibility endpoint wraps errors in a JSON *array*, which the
+     * previous object-only parse threw on — so the real reason was silently
+     * discarded and every failure showed a generic summary. Both shapes are
+     * handled now, and the raw body is used as a last resort rather than
+     * showing nothing.
+     */
+    internal fun extractErrorMessage(body: String): String? {
+        if (body.isBlank()) return null
+
+        runCatching {
+            val message = JSONObject(body).optJSONObject("error")?.optString("message")
+            if (!message.isNullOrBlank()) return message
+        }
+        runCatching {
+            val array = JSONArray(body)
+            for (i in 0 until array.length()) {
+                val message = array.optJSONObject(i)?.optJSONObject("error")?.optString("message")
+                if (!message.isNullOrBlank()) return message
+            }
+        }
+        // Unparseable — a truncated raw body still beats hiding the reason.
+        return body.trim().take(300).takeIf { it.isNotBlank() }
     }
 
     /** True when a failure looks like the model id was the problem, not the key. */

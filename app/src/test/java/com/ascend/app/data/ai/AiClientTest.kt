@@ -113,6 +113,52 @@ class AiClientTest {
         assertEquals("some-random-model-v1", client.pickBestModel(AiProvider.GROQ, models))
     }
 
+    // ---- Reading the provider's own error message --------------------------
+
+    @Test
+    fun `reads an error message from the object shape`() {
+        val body = """{"error":{"code":400,"message":"API key not valid."}}"""
+        assertEquals("API key not valid.", client.extractErrorMessage(body))
+    }
+
+    @Test
+    fun `reads an error message from the array shape`() {
+        // Google's compatibility endpoint wraps errors in an array. Parsing this
+        // as an object threw, so the real reason was silently discarded and every
+        // failure showed a generic summary instead.
+        val body = """[{"error":{"code":404,"message":"models/gemini-2.5-flash is not found for API version v1beta"}}]"""
+        assertEquals(
+            "models/gemini-2.5-flash is not found for API version v1beta",
+            client.extractErrorMessage(body),
+        )
+    }
+
+    @Test
+    fun `falls back to the raw body rather than hiding the reason`() {
+        val body = "upstream connect error, no healthy upstream"
+        assertEquals(body, client.extractErrorMessage(body))
+    }
+
+    @Test
+    fun `blank bodies yield nothing`() {
+        assertNull(client.extractErrorMessage(""))
+        assertNull(client.extractErrorMessage("   "))
+    }
+
+    @Test
+    fun `error descriptions always carry the provider's explanation`() {
+        val body = """[{"error":{"message":"models/foo is not found for API version v1beta"}}]"""
+        val described = client.describeError(404, body)
+        assertTrue("summary missing", described.contains("404"))
+        assertTrue("provider detail missing", described.contains("is not found for API version"))
+    }
+
+    @Test
+    fun `a real Gemini not-found message triggers model recovery`() {
+        val body = """[{"error":{"message":"models/gemini-2.5-flash is not found for API version v1beta"}}]"""
+        assertTrue(client.isModelProblem(client.describeError(404, body)))
+    }
+
     // ---- Key detection ------------------------------------------------------
 
     @Test

@@ -22,9 +22,17 @@ enum class AiProvider(
      * only a starting suggestion — catalogues change constantly, so the real
      * list is fetched from the provider with the user's key. */
     val commonModels: List<String>,
-    /** OpenAI-shaped models endpoint, used to replace the suggestions above
-     * with what this specific key can actually call. */
+    /** Models endpoint, used to replace the suggestions above with what this
+     * specific key can actually call. */
     val modelsEndpoint: String,
+    /**
+     * Google is talked to through its own API rather than its OpenAI
+     * compatibility shim. The shim returns error bodies in a different shape
+     * and its model routing differs from the documented API, which cost
+     * several rounds of debugging. The native API also reports which models
+     * support text generation, so a usable one can be chosen reliably.
+     */
+    val isNativeGemini: Boolean = false,
 ) {
     OPENROUTER(
         displayName = "OpenRouter",
@@ -67,13 +75,15 @@ enum class AiProvider(
     ),
     GEMINI(
         displayName = "Google Gemini",
-        endpoint = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-        defaultModel = "gemini-2.5-flash",
+        // Base path; the model id and :generateContent are appended per request.
+        endpoint = "https://generativelanguage.googleapis.com/v1beta/models",
+        defaultModel = "gemini-flash-latest",
         signupUrl = "https://aistudio.google.com/apikey",
         notes = "Free tier, no card needed. Key issued instantly from AI Studio.",
         keyPrefixes = listOf("AIza", "AQ."),
-        commonModels = listOf("gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"),
-        modelsEndpoint = "https://generativelanguage.googleapis.com/v1beta/openai/models",
+        commonModels = listOf("gemini-flash-latest", "gemini-2.5-flash", "gemini-2.0-flash"),
+        modelsEndpoint = "https://generativelanguage.googleapis.com/v1beta/models",
+        isNativeGemini = true,
     ),
     ;
 
