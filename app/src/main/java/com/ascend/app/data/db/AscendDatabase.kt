@@ -22,8 +22,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         RewardPurchaseEntity::class,
         UnlockedAchievementEntity::class,
         DailyQuestEntity::class,
+        ShadowEntity::class,
+        GateRunEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -40,6 +42,8 @@ abstract class AscendDatabase : RoomDatabase() {
     abstract fun rewardPurchaseDao(): RewardPurchaseDao
     abstract fun unlockedAchievementDao(): UnlockedAchievementDao
     abstract fun dailyQuestDao(): DailyQuestDao
+    abstract fun shadowDao(): ShadowDao
+    abstract fun gateRunDao(): GateRunDao
 
     companion object {
         /**
@@ -106,6 +110,44 @@ abstract class AscendDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v3 adds the choice layer: manually allocated stat points, unlocked
+         * skills, extracted Shadows and Gate runs. Written as a real migration
+         * so nobody loses streaks, gold or achievements.
+         */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN allocatedPoints TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN unlockedSkills TEXT NOT NULL DEFAULT ''")
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS shadows (
+                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        habitId INTEGER NOT NULL,
+                        stat TEXT NOT NULL,
+                        extractedAtEpochMillis INTEGER NOT NULL,
+                        rank INTEGER NOT NULL DEFAULT 1
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS gate_runs (
+                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        rank TEXT NOT NULL,
+                        startDate TEXT NOT NULL,
+                        daysCleared INTEGER NOT NULL DEFAULT 0,
+                        status TEXT NOT NULL DEFAULT 'ACTIVE',
+                        stakePaid INTEGER NOT NULL,
+                        lastEvaluatedDate TEXT
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
         @Volatile private var instance: AscendDatabase? = null
 
         fun getInstance(context: Context): AscendDatabase =
@@ -115,7 +157,7 @@ abstract class AscendDatabase : RoomDatabase() {
                     AscendDatabase::class.java,
                     "ascend.db",
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build()
                     .also { instance = it }
             }

@@ -4,7 +4,10 @@ import androidx.room.TypeConverter
 import com.ascend.app.domain.DailyQuestKind
 import com.ascend.app.domain.DifficultyRating
 import com.ascend.app.domain.EvidenceType
+import com.ascend.app.domain.GateRank
+import com.ascend.app.domain.GateStatus
 import com.ascend.app.domain.HunterClass
+import com.ascend.app.domain.Skill
 import com.ascend.app.domain.Stat
 
 class Converters {
@@ -14,6 +17,29 @@ class Converters {
     @TypeConverter
     fun stringToHunterClass(value: String): HunterClass =
         runCatching { HunterClass.valueOf(value) }.getOrDefault(HunterClass.NONE)
+
+    @TypeConverter
+    fun gateRankToString(value: GateRank): String = value.name
+
+    @TypeConverter
+    fun stringToGateRank(value: String): GateRank = GateRank.valueOf(value)
+
+    @TypeConverter
+    fun gateStatusToString(value: GateStatus): String = value.name
+
+    @TypeConverter
+    fun stringToGateStatus(value: String): GateStatus = GateStatus.valueOf(value)
+
+    /** Skills stored as "IRON_BODY,COIN_PURSE". Unknown names are dropped rather
+     * than thrown on, so removing a skill in a future version can't brick a save. */
+    @TypeConverter
+    fun skillsToString(value: Set<Skill>): String = value.joinToString(",") { it.name }
+
+    @TypeConverter
+    fun stringToSkills(value: String): Set<Skill> {
+        if (value.isBlank()) return emptySet()
+        return value.split(",").mapNotNull { runCatching { Skill.valueOf(it) }.getOrNull() }.toSet()
+    }
 
     @TypeConverter
     fun questKindToString(value: DailyQuestKind): String = value.name

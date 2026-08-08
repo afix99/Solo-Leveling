@@ -9,7 +9,9 @@ import com.ascend.app.data.db.HabitEntity
 import com.ascend.app.data.db.HunterProfileEntity
 import com.ascend.app.data.db.LieTruthEntity
 import com.ascend.app.data.db.RewardEntity
+import com.ascend.app.data.db.GateRunEntity
 import com.ascend.app.data.db.RewardPurchaseEntity
+import com.ascend.app.data.db.ShadowEntity
 import com.ascend.app.data.db.StatProgressEntity
 import com.ascend.app.data.db.UnlockedAchievementEntity
 import com.ascend.app.data.db.WeeklyReviewEntity
@@ -18,6 +20,15 @@ import com.ascend.app.domain.Achievements
 import com.ascend.app.domain.DailyQuests
 import com.ascend.app.domain.DifficultyRating
 import com.ascend.app.domain.Economy
+import com.ascend.app.domain.GateRank
+import com.ascend.app.domain.GateRun
+import com.ascend.app.domain.GateStatus
+import com.ascend.app.domain.Gates
+import com.ascend.app.domain.HunterLoadout
+import com.ascend.app.domain.Shadow
+import com.ascend.app.domain.Shadows
+import com.ascend.app.domain.Skill
+import com.ascend.app.domain.StatAllocation
 import com.ascend.app.domain.EvidenceType
 import com.ascend.app.domain.HunterClass
 import com.ascend.app.domain.HunterStats
@@ -50,6 +61,8 @@ class AscendRepository(private val db: AscendDatabase) {
     private val rewardPurchaseDao = db.rewardPurchaseDao()
     private val unlockedAchievementDao = db.unlockedAchievementDao()
     private val dailyQuestDao = db.dailyQuestDao()
+    private val shadowDao = db.shadowDao()
+    private val gateRunDao = db.gateRunDao()
 
     // ---- Observing state -------------------------------------------------
 
@@ -73,6 +86,9 @@ class AscendRepository(private val db: AscendDatabase) {
         unlockedAchievementDao.observeAll()
     fun observeDailyQuest(date: LocalDate): Flow<DailyQuestEntity?> =
         dailyQuestDao.observeForDate(date.toString())
+    fun observeShadows(): Flow<List<ShadowEntity>> = shadowDao.observeAll()
+    fun observeActiveGate(): Flow<GateRunEntity?> = gateRunDao.observeActive()
+    fun observeGateHistory(): Flow<List<GateRunEntity>> = gateRunDao.observeHistory()
 
     suspend fun getHunterProfile(): HunterProfileEntity = hunterProfileDao.get() ?: HunterProfileEntity()
 
@@ -159,28 +175,15 @@ class AscendRepository(private val db: AscendDatabase) {
             0
         }
 
-        val profile = getHunterProfile()
-        val levels = statLevels()
-        val baseXp = Leveling.xpForCompletion(habit.isNonNegotiable, isPenaltyQuest)
-        val baseGold = Economy.goldForCompletion(habit.isNonNegotiable, isPenaltyQuest)
+        val loadout = currentLoadout()
 
         val newXp = if (completed) {
-            StatEffects.finalXp(
-                baseXp = baseXp,
-                mindLevel = levels.getValue(Stat.INT),
-                streakDays = newStreak,
-                movementLevel = levels.getValue(Stat.AGI),
-                classXpBonusPercent = profile.hunterClass.xpBonusPercent,
-            )
+            loadout.finalXp(habit.isNonNegotiable, isPenaltyQuest, newStreak)
         } else {
             0
         }
         val newGold = if (completed) {
-            StatEffects.finalGold(
-                baseGold = baseGold,
-                bodyLevel = levels.getValue(Stat.STR),
-                classGoldBonusPercent = profile.hunterClass.goldBonusPercent,
-            )
+            loadout.finalGold(habit.isNonNegotiable, isPenaltyQuest)
         } else {
             0
         }
@@ -216,6 +219,7 @@ class AscendRepository(private val db: AscendDatabase) {
                 "Redeemed “${habit.name}” after missing it",
                 habit.id,
             )
+            extractShadow(habit)
         }
 
         if (completed) recordPerfectDayIfEarned(date)
@@ -224,7 +228,7 @@ class AscendRepository(private val db: AscendDatabase) {
             xp = newXp,
             gold = newGold,
             streak = newStreak,
-            streakBonusPercent = StatEffects.streakBonusPercent(newStreak, levels.getValue(Stat.AGI)),
+            streakBonusPercent = loadout.streakBonusPercent(newStreak),
         )
     }
 
@@ -274,6 +278,7 @@ class AscendRepository(private val db: AscendDatabase) {
     suspend fun runMidnightRollover(rolledDate: LocalDate) {
         val dateStr = rolledDate.toString()
         val nextDateStr = rolledDate.plusDays(1).toString()
+        val loadout = currentLoadout()
 
         for (habit in habitDao.getActiveHabits()) {
             if (!habit.isNonNegotiable) continue
@@ -288,14 +293,18 @@ class AscendRepository(private val db: AscendDatabase) {
             }
 
             val currentXp = statProgressDao.get(habit.stat)?.xp ?: 0
-            val penalty = StatEffects.finalPenalty(
-                basePenalty = Leveling.PENALTY_XP_LOSS,
-                healthLevel = statLevels().getValue(Stat.VIT),
-                classPenaltyResistPercent = getHunterProfile().hunterClass.penaltyResistPercent,
+            // Second Wind can waive the first miss of a week, so the count of
+            // prior misses this week decides whether the penalty lands at all.
+            val missesThisWeek = dailyLogDao.countNonNegotiableMissesInRange(
+                rolledDate.minusDays(6).toString(),
+                rolledDate.minusDays(1).toString(),
             )
-            statProgressDao.upsert(
-                StatProgressEntity(habit.stat, Leveling.applyPenaltyOf(currentXp, penalty)),
-            )
+            val penalty = loadout.finalPenalty(isFirstMissThisWeek = missesThisWeek == 0)
+            if (penalty > 0) {
+                statProgressDao.upsert(
+                    StatProgressEntity(habit.stat, Leveling.applyPenaltyOf(currentXp, penalty)),
+                )
+            }
 
             val nextExisting = dailyLogDao.getForHabitAndDate(habit.id, nextDateStr)
             when {
@@ -362,12 +371,7 @@ class AscendRepository(private val db: AscendDatabase) {
             ),
         )
         if (completedFully) {
-            val bonus = StatEffects.finalFocusBonus(
-                baseBonus = Leveling.FOCUS_SESSION_BONUS_XP,
-                focusLevel = statLevels().getValue(Stat.PER),
-                classFocusBonusPercent = getHunterProfile().hunterClass.focusBonusPercent,
-            )
-            adjustStatXp(habit.stat, bonus)
+            adjustStatXp(habit.stat, currentLoadout().finalFocusBonus())
             addGold(Economy.FOCUS_SESSION_GOLD)
             logEvidence(
                 EvidenceType.HARD_FOCUS_SESSION,
@@ -572,12 +576,177 @@ class AscendRepository(private val db: AscendDatabase) {
         if (progress < quest.targetCount) return null
 
         dailyQuestDao.upsert(quest.copy(claimed = true))
+        val multiplier = currentLoadout().dailyQuestMultiplier()
         // Quest XP is split evenly across all five stats so it advances the
         // Hunter Level without distorting any single stat's meaning.
-        val perStat = (quest.xpReward / Stat.entries.size).coerceAtLeast(1)
+        val perStat = ((quest.xpReward * multiplier) / Stat.entries.size).coerceAtLeast(1)
         Stat.entries.forEach { adjustStatXp(it, perStat) }
-        addGold(quest.goldReward)
+        addGold(quest.goldReward * multiplier)
         return quest
+    }
+
+    // ---- Loadout: the single place every payout modifier is resolved -------
+
+    /** Assembles the current stat levels, allocations, skills, shadows and
+     * class into one value. Every payout calculation goes through this. */
+    suspend fun currentLoadout(): HunterLoadout {
+        val profile = getHunterProfile()
+        return HunterLoadout(
+            statLevels = statLevels(),
+            allocatedPoints = profile.allocatedPoints,
+            unlockedSkills = profile.unlockedSkills,
+            shadows = shadowDao.getAll().map { it.toDomain() },
+            hunterClass = profile.hunterClass,
+        )
+    }
+
+    private fun ShadowEntity.toDomain() = Shadow(
+        id = id,
+        name = name,
+        habitId = habitId,
+        stat = stat,
+        extractedAtEpochMillis = extractedAtEpochMillis,
+        rank = rank,
+    )
+
+    suspend fun hunterLevel(): Int =
+        Leveling.hunterLevelForTotalXp(statProgressDao.getAll().sumOf { it.xp })
+
+    suspend fun currentRank(): com.ascend.app.domain.Rank =
+        Leveling.rankForTotalXp(statProgressDao.getAll().sumOf { it.xp })
+
+    // ---- Stat point allocation --------------------------------------------
+
+    suspend fun allocateStatPoint(stat: Stat): Boolean {
+        val profile = getHunterProfile()
+        val level = hunterLevel()
+        if (!StatAllocation.canAllocate(level, profile.allocatedPoints)) return false
+        hunterProfileDao.upsert(
+            profile.copy(
+                allocatedPoints = StatAllocation.allocate(stat, level, profile.allocatedPoints),
+            ),
+        )
+        return true
+    }
+
+    /** Refunds every allocated point for a gold fee, so a build is a decision
+     * you can revise but not one you can churn for free. */
+    suspend fun respecStatPoints(): Boolean {
+        val profile = getHunterProfile()
+        if (profile.allocatedPoints.isEmpty()) return false
+        if (profile.gold < StatAllocation.RESPEC_GOLD_COST) return false
+        hunterProfileDao.upsert(
+            profile.copy(
+                allocatedPoints = StatAllocation.respec(),
+                gold = profile.gold - StatAllocation.RESPEC_GOLD_COST,
+            ),
+        )
+        return true
+    }
+
+    // ---- Skills ------------------------------------------------------------
+
+    suspend fun unlockSkill(skill: Skill): Boolean {
+        val profile = getHunterProfile()
+        val level = hunterLevel()
+        val rank = currentRank()
+        if (!Skill.canUnlock(skill, level, rank, profile.unlockedSkills)) return false
+        hunterProfileDao.upsert(profile.copy(unlockedSkills = profile.unlockedSkills + skill))
+        return true
+    }
+
+    suspend fun skillPointsAvailable(): Int =
+        Skill.pointsAvailable(hunterLevel(), currentRank(), getHunterProfile().unlockedSkills)
+
+    // ---- Shadows -----------------------------------------------------------
+
+    /** Extracting from a habit you already command promotes that Shadow rather
+     * than adding a duplicate, so the army stays as short as your habit list. */
+    private suspend fun extractShadow(habit: HabitEntity) {
+        val existing = shadowDao.forHabit(habit.id)
+        if (existing != null) {
+            shadowDao.update(existing.copy(rank = existing.rank + 1))
+        } else {
+            shadowDao.insert(
+                ShadowEntity(
+                    name = Shadows.nameFor(habit.name),
+                    habitId = habit.id,
+                    stat = habit.stat,
+                    extractedAtEpochMillis = System.currentTimeMillis(),
+                ),
+            )
+        }
+    }
+
+    // ---- Gates --------------------------------------------------------------
+
+    private fun GateRunEntity.toDomain() = GateRun(
+        id = id,
+        rank = rank,
+        startDate = LocalDate.parse(startDate),
+        daysCleared = daysCleared,
+        status = status,
+    )
+
+    suspend fun activeGate(): GateRun? = gateRunDao.getActive()?.toDomain()
+
+    /** Pays the stake up front — that is what gives the run its weight. */
+    suspend fun enterGate(rank: GateRank, today: LocalDate): Boolean {
+        val profile = getHunterProfile()
+        if (!Gates.canEnter(activeGate(), rank, hunterLevel(), profile.gold)) return false
+
+        hunterProfileDao.upsert(profile.copy(gold = profile.gold - rank.stake))
+        gateRunDao.insert(
+            GateRunEntity(
+                rank = rank,
+                startDate = today.toString(),
+                stakePaid = rank.stake,
+                lastEvaluatedDate = today.minusDays(1).toString(),
+            ),
+        )
+        return true
+    }
+
+    /** Abandoning forfeits the stake; the gold is already spent either way. */
+    suspend fun abandonGate(): Boolean {
+        val active = gateRunDao.getActive() ?: return false
+        gateRunDao.update(active.copy(status = GateStatus.FAILED))
+        return true
+    }
+
+    /**
+     * Advances the active run for a finished day. Guarded by lastEvaluatedDate
+     * so a rollover that fires twice can't double-count or wrongly fail a run.
+     */
+    suspend fun advanceGateForDay(rolledDate: LocalDate): GateRun? {
+        val entity = gateRunDao.getActive() ?: return null
+        if (entity.lastEvaluatedDate == rolledDate.toString()) return entity.toDomain()
+        if (LocalDate.parse(entity.startDate).isAfter(rolledDate)) return entity.toDomain()
+
+        val nonNegotiables = habitDao.getActiveHabits().filter { it.isNonNegotiable }
+        val completed = dailyLogDao.completedHabitIdsOn(rolledDate.toString()).toSet()
+        val perfect = nonNegotiables.isNotEmpty() && nonNegotiables.all { it.id in completed }
+
+        val advanced = Gates.advance(entity.toDomain(), perfect)
+        gateRunDao.update(
+            entity.copy(
+                daysCleared = advanced.daysCleared,
+                status = advanced.status,
+                lastEvaluatedDate = rolledDate.toString(),
+            ),
+        )
+
+        if (advanced.status == GateStatus.CLEARED) {
+            addGold(Gates.goldPayout(advanced))
+            val perStat = (Gates.xpPayout(advanced) / Stat.entries.size).coerceAtLeast(1)
+            Stat.entries.forEach { adjustStatXp(it, perStat) }
+            logEvidence(
+                EvidenceType.STREAK_MILESTONE,
+                "Cleared a ${advanced.rank.displayName}",
+                advanced.id,
+            )
+        }
+        return advanced
     }
 
     /** Wipes every table — used by Settings' "Reset data". Irreversible. */

@@ -6,7 +6,10 @@ import androidx.room.PrimaryKey
 import com.ascend.app.domain.DailyQuestKind
 import com.ascend.app.domain.DifficultyRating
 import com.ascend.app.domain.EvidenceType
+import com.ascend.app.domain.GateRank
+import com.ascend.app.domain.GateStatus
 import com.ascend.app.domain.HunterClass
+import com.ascend.app.domain.Skill
 import com.ascend.app.domain.Stat
 
 @Entity(tableName = "habits")
@@ -64,6 +67,9 @@ data class HunterProfileEntity(
     /** ISO date of the most recent fully-cleared day; stops the counter being
      * farmed by unchecking and rechecking a habit. */
     val lastPerfectDate: String? = null,
+    /** Manually spent stat points, on top of levels earned from XP. */
+    val allocatedPoints: Map<Stat, Int> = emptyMap(),
+    val unlockedSkills: Set<Skill> = emptySet(),
 ) {
     companion object {
         const val SINGLETON_ID = 0
@@ -145,4 +151,28 @@ data class EvidenceLogEntryEntity(
     val description: String,
     val dateEpochMillis: Long,
     val sourceId: Long? = null,
+)
+
+@Entity(tableName = "shadows")
+data class ShadowEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val habitId: Long,
+    val stat: Stat,
+    val extractedAtEpochMillis: Long,
+    /** Rises each time the same habit is missed and redeemed again. */
+    val rank: Int = 1,
+)
+
+@Entity(tableName = "gate_runs")
+data class GateRunEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val rank: GateRank,
+    /** ISO date the run was entered. */
+    val startDate: String,
+    val daysCleared: Int = 0,
+    val status: GateStatus = GateStatus.ACTIVE,
+    val stakePaid: Int,
+    /** ISO date of the last day already counted, so a run advances once per day. */
+    val lastEvaluatedDate: String? = null,
 )

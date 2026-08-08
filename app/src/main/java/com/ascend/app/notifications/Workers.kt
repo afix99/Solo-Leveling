@@ -81,6 +81,8 @@ class MidnightRolloverWorker(context: Context, params: WorkerParameters) : Corou
         val today = LocalDate.now()
         val rolledDate = today.minusDays(1)
         repo.runMidnightRollover(rolledDate)
+        // Gates settle on the same boundary as penalties, so a day counts once.
+        repo.advanceGateForDay(rolledDate)
 
         if (today.dayOfWeek == DayOfWeek.MONDAY) {
             repo.generateWeeklyReview(today.minusDays(7))

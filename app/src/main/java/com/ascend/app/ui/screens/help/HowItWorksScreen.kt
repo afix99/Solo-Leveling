@@ -19,7 +19,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ascend.app.domain.Achievements
+import com.ascend.app.domain.GateRank
 import com.ascend.app.domain.HunterClass
+import com.ascend.app.domain.Shadows
+import com.ascend.app.domain.Skill
+import com.ascend.app.domain.StatAllocation
 import com.ascend.app.domain.Rank
 import com.ascend.app.domain.Stat
 import com.ascend.app.domain.StatEffects
@@ -91,6 +95,50 @@ fun HowItWorksScreen() {
                         Pill(stat.shortLabel, stat.color())
                     }
                 }
+            }
+        }
+
+        item {
+            GlassCard(accent = AscendColors.AccentBlue) {
+                Eyebrow("Stat points — the build", color = AscendColors.AccentBlue)
+                Spacer(Modifier.height(10.dp))
+                Bullet("Every Hunter Level hands you ${StatAllocation.POINTS_PER_LEVEL} points to spend in System → Status.")
+                Bullet("A point raises a stat exactly like levelling it naturally, and each stat does something different — so where they go is a real decision.")
+                Bullet("Pour them into Mind to snowball XP, Body for Gold, Health to survive bad weeks, Focus for deep work, Movement for streaks.")
+                Bullet("Changed your mind? Respec refunds everything for ${StatAllocation.RESPEC_GOLD_COST} Gold.")
+            }
+        }
+
+        item {
+            GlassCard(accent = AscendColors.AccentViolet) {
+                Eyebrow("Skills — rewriting the rules", color = AscendColors.AccentViolet)
+                Spacer(Modifier.height(10.dp))
+                Bullet("You earn a skill point every 2 levels, plus two every time your Rank rises.")
+                Bullet("${Skill.entries.size} skills across 3 tiers. None of them add a side-game — each one changes a rule you already play by.")
+                Bullet("Iron Body lets a streak survive a miss. Second Wind waives your first penalty each week. Ruler's Authority makes redemption pay 2.5x.")
+                Bullet("They stack with your stats and your class, so builds compound.")
+            }
+        }
+
+        item {
+            GlassCard(accent = AscendColors.AccentViolet) {
+                Eyebrow("Shadows — failure becomes an asset", color = AscendColors.AccentViolet)
+                Spacer(Modifier.height(10.dp))
+                Bullet("Miss a non-negotiable, then complete its Penalty Quest the next day, and that habit joins you as a Shadow.")
+                Bullet("Each Shadow permanently boosts its habit's stat by ${Shadows.PERCENT_PER_RANK}% per rank, capped at ${Shadows.MAX_PERCENT_PER_STAT}% per stat.")
+                Bullet("Redeeming the same habit again promotes the Shadow instead of adding a duplicate.")
+                Bullet("The point: coming back from a slip leaves you stronger than never slipping would have.")
+            }
+        }
+
+        item {
+            GlassCard(accent = AscendColors.Amber) {
+                Eyebrow("Gates — optional risk", color = AscendColors.Amber)
+                Spacer(Modifier.height(10.dp))
+                Bullet("Stake Gold on holding every non-negotiable for a run of days.")
+                Bullet("Clear it and the stake comes back multiplied, plus XP. Miss a single day and the stake is gone.")
+                Bullet("${GateRank.entries.size} ranks, from a ${GateRank.E.days}-day E-Rank to a ${GateRank.S.days}-day S-Rank.")
+                Bullet("Completely optional. Ignoring Gates costs you nothing — they exist so you can choose your own pressure, not so the app can apply it.")
             }
         }
 

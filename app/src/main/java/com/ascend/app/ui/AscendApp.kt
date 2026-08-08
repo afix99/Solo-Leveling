@@ -41,23 +41,25 @@ import com.ascend.app.ui.screens.onboarding.OnboardingScreen
 import com.ascend.app.ui.screens.profile.ProfileScreen
 import com.ascend.app.ui.screens.shop.ShopScreen
 import com.ascend.app.ui.screens.stats.StatsScreen
+import com.ascend.app.ui.screens.system.SystemScreen
 import com.ascend.app.ui.screens.today.TodayScreen
 import com.ascend.app.ui.screens.weeklyreview.WeeklyReviewScreen
 import com.ascend.app.ui.theme.AscendColors
 
 private sealed class Dest(val route: String, val label: String, val icon: ImageVector) {
     data object Today : Dest("today", "Today", Icons.Default.TaskAlt)
-    data object Stats : Dest("stats", "Stats", Icons.Default.Equalizer)
+    data object System : Dest("system", "System", Icons.Default.Equalizer)
     data object Habits : Dest("habits", "Habits", Icons.Default.Checklist)
     data object Shop : Dest("shop", "Shop", Icons.Default.Storefront)
     data object Profile : Dest("profile", "More", Icons.Default.MoreHoriz)
 }
 
-private val bottomTabs = listOf(Dest.Today, Dest.Stats, Dest.Habits, Dest.Shop, Dest.Profile)
+private val bottomTabs = listOf(Dest.Today, Dest.System, Dest.Habits, Dest.Shop, Dest.Profile)
 private const val ROUTE_LIES_TRUTHS = "lies_truths"
 private const val ROUTE_HOW_IT_WORKS = "how_it_works"
 private const val ROUTE_WEEKLY_REVIEW = "weekly_review"
 private const val ROUTE_ACHIEVEMENTS = "achievements"
+private const val ROUTE_STATS = "stats"
 
 @Composable
 fun AscendApp(repository: AscendRepository) {
@@ -109,7 +111,8 @@ private fun MainScaffold(repository: AscendRepository) {
                 composable(Dest.Today.route) {
                     TodayScreen(repository = repository, onOpenHabits = { navController.navigate(Dest.Habits.route) })
                 }
-                composable(Dest.Stats.route) { StatsScreen(repository = repository) }
+                composable(Dest.System.route) { SystemScreen(repository = repository) }
+                composable(ROUTE_STATS) { StatsScreen(repository = repository) }
                 composable(Dest.Habits.route) { HabitsScreen(repository = repository) }
                 composable(Dest.Shop.route) { ShopScreen(repository = repository) }
                 composable(Dest.Profile.route) {
@@ -119,6 +122,7 @@ private fun MainScaffold(repository: AscendRepository) {
                         onOpenHowItWorks = { navController.navigate(ROUTE_HOW_IT_WORKS) },
                         onOpenWeeklyReview = { navController.navigate(ROUTE_WEEKLY_REVIEW) },
                         onOpenAchievements = { navController.navigate(ROUTE_ACHIEVEMENTS) },
+                        onOpenStats = { navController.navigate(ROUTE_STATS) },
                     )
                 }
                 composable(ROUTE_WEEKLY_REVIEW) { WeeklyReviewScreen(repository = repository) }

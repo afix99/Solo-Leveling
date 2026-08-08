@@ -217,3 +217,39 @@ interface EvidenceLogDao {
     @Insert
     suspend fun insert(entity: EvidenceLogEntryEntity): Long
 }
+
+@Dao
+interface ShadowDao {
+    @Query("SELECT * FROM shadows ORDER BY rank DESC, extractedAtEpochMillis DESC")
+    fun observeAll(): Flow<List<ShadowEntity>>
+
+    @Query("SELECT * FROM shadows")
+    suspend fun getAll(): List<ShadowEntity>
+
+    @Query("SELECT * FROM shadows WHERE habitId = :habitId LIMIT 1")
+    suspend fun forHabit(habitId: Long): ShadowEntity?
+
+    @Insert
+    suspend fun insert(entity: ShadowEntity): Long
+
+    @Update
+    suspend fun update(entity: ShadowEntity)
+}
+
+@Dao
+interface GateRunDao {
+    @Query("SELECT * FROM gate_runs WHERE status = 'ACTIVE' LIMIT 1")
+    fun observeActive(): Flow<GateRunEntity?>
+
+    @Query("SELECT * FROM gate_runs WHERE status = 'ACTIVE' LIMIT 1")
+    suspend fun getActive(): GateRunEntity?
+
+    @Query("SELECT * FROM gate_runs ORDER BY id DESC LIMIT 20")
+    fun observeHistory(): Flow<List<GateRunEntity>>
+
+    @Insert
+    suspend fun insert(entity: GateRunEntity): Long
+
+    @Update
+    suspend fun update(entity: GateRunEntity)
+}

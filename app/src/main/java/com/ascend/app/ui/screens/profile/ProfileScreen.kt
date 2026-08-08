@@ -60,6 +60,7 @@ fun ProfileScreen(
     onOpenHowItWorks: () -> Unit,
     onOpenWeeklyReview: () -> Unit,
     onOpenAchievements: () -> Unit,
+    onOpenStats: () -> Unit,
 ) {
     val vm: ProfileViewModel = viewModel(factory = SimpleViewModelFactory { ProfileViewModel(repository) })
     val profile by vm.profile.collectAsStateWithLifecycle()
@@ -153,6 +154,8 @@ fun ProfileScreen(
 
         item {
             GlassCard(accent = AscendColors.AccentBlue) {
+                MenuRow("Stat breakdown", onOpenStats)
+                Spacer(Modifier.height(4.dp))
                 MenuRow("Achievements & Titles", onOpenAchievements)
                 Spacer(Modifier.height(4.dp))
                 MenuRow("Weekly Review", onOpenWeeklyReview)
