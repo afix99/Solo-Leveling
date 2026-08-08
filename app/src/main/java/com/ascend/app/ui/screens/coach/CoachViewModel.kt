@@ -74,6 +74,10 @@ class CoachViewModel(private val repository: AscendRepository) : ViewModel() {
     var modelsMessage by mutableStateOf<String?>(null)
         private set
 
+    /** Non-error information, e.g. that the model was swapped automatically. */
+    var notice by mutableStateOf<String?>(null)
+        private set
+
     fun saveSettings(updated: AiSettingsEntity) {
         viewModelScope.launch { repository.saveAiSettings(updated) }
     }
@@ -101,10 +105,20 @@ class CoachViewModel(private val repository: AscendRepository) : ViewModel() {
             val ctx = repository.buildCoachContext(LocalDate.now())
             val (system, user) = CoachPrompts.build(type, ctx)
 
-            when (val result = client.complete(activeProvider, current.apiKey, model, system, user)) {
+            val resolved = client.completeAutoRecovering(
+                activeProvider, current.apiKey, model, system, user,
+            )
+            when (val result = resolved.result) {
                 is AiResult.Success -> {
-                    repository.saveAdvice(type.name, result.text, model)
+                    repository.saveAdvice(type.name, result.text, resolved.modelUsed)
                     latest = type to result.text
+                    if (resolved.modelUsed != model) {
+                        // Remember the model that worked so the next request
+                        // doesn't repeat the failed round trip.
+                        repository.saveAiSettings(current.copy(model = resolved.modelUsed))
+                        notice = "Switched to ${resolved.modelUsed} — the saved model wasn't " +
+                            "available on your key."
+                    }
                 }
                 is AiResult.Failure ->
                     error = "${result.message}\n\n(${activeProvider.displayName} · $model)"
@@ -129,20 +143,31 @@ class CoachViewModel(private val repository: AscendRepository) : ViewModel() {
                 current.apiKey.isBlank() ->
                     "No key saved yet. Paste your key and tap Save first."
 
-                else -> when (
-                    val result = client.complete(
+                else -> {
+                    val resolved = client.completeAutoRecovering(
                         provider = activeProvider,
                         apiKey = current.apiKey,
                         model = model,
                         systemPrompt = "You are a connection test. Reply with exactly: OK",
                         userPrompt = "Reply with exactly: OK",
-                        timeoutMillis = 30_000,
                     )
-                ) {
-                    is AiResult.Success ->
-                        "Connected. ${activeProvider.displayName} replied using $model."
-                    is AiResult.Failure ->
-                        "Failed: ${result.message}\n\n(${activeProvider.displayName} · $model)"
+                    when (val result = resolved.result) {
+                        is AiResult.Success -> {
+                            if (resolved.modelUsed != model) {
+                                repository.saveAiSettings(current.copy(model = resolved.modelUsed))
+                            }
+                            "Connected. ${activeProvider.displayName} replied using " +
+                                "${resolved.modelUsed}." +
+                                if (resolved.modelUsed != model) {
+                                    " Your saved model wasn't available, so this one was " +
+                                        "selected and saved."
+                                } else {
+                                    ""
+                                }
+                        }
+                        is AiResult.Failure ->
+                            "Failed: ${result.message}\n\n(${activeProvider.displayName} · $model)"
+                    }
                 }
             }
             testing = false
@@ -184,6 +209,10 @@ class CoachViewModel(private val repository: AscendRepository) : ViewModel() {
 
     fun clearError() {
         error = null
+    }
+
+    fun clearNotice() {
+        notice = null
     }
 
     fun clearTestResult() {

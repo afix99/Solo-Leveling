@@ -97,6 +97,79 @@ class AiClient {
         }
     }
 
+    /** A completion plus the model that actually worked, which may not be the
+     * one asked for if auto-recovery kicked in. */
+    data class ResolvedCompletion(val result: AiResult, val modelUsed: String)
+
+    /**
+     * Runs a completion and, if the model turns out to be unavailable, finds one
+     * that works and retries once.
+     *
+     * Provider catalogues change constantly and model availability varies by
+     * account and region, so a hardcoded default will eventually 404 for
+     * somebody. Making the user hunt for a valid model id is the wrong answer —
+     * the app can just ask the provider and pick one.
+     */
+    suspend fun completeAutoRecovering(
+        provider: AiProvider,
+        apiKey: String,
+        model: String,
+        systemPrompt: String,
+        userPrompt: String,
+    ): ResolvedCompletion {
+        val first = complete(provider, apiKey, model, systemPrompt, userPrompt)
+        if (first is AiResult.Success) return ResolvedCompletion(first, model)
+
+        val failure = first as AiResult.Failure
+        if (!isModelProblem(failure.message)) return ResolvedCompletion(first, model)
+
+        val listed = listModels(provider, apiKey)
+        if (listed !is ModelListResult.Success) return ResolvedCompletion(first, model)
+
+        val replacement = pickBestModel(provider, listed.models, exclude = model)
+            ?: return ResolvedCompletion(first, model)
+
+        val second = complete(provider, apiKey, replacement, systemPrompt, userPrompt)
+        return if (second is AiResult.Success) {
+            ResolvedCompletion(second, replacement)
+        } else {
+            // Report the original failure — it describes the model the user chose.
+            ResolvedCompletion(first, model)
+        }
+    }
+
+    /**
+     * Picks a sensible chat model from whatever the provider offers. Filters out
+     * things that can't answer a chat prompt at all (embeddings, image, audio),
+     * then prefers small/fast/free variants.
+     */
+    fun pickBestModel(provider: AiProvider, available: List<String>, exclude: String? = null): String? {
+        val unusable = listOf(
+            "embed", "embedding", "tts", "whisper", "imagen", "veo", "aqa",
+            "guard", "moderation", "rerank", "vision-only", "image-generation",
+        )
+        val candidates = available
+            .filter { it != exclude }
+            .filterNot { id -> unusable.any { id.lowercase().contains(it) } }
+        if (candidates.isEmpty()) return null
+
+        fun score(id: String): Int {
+            val lower = id.lowercase()
+            var s = 0
+            // Free tiers first — this app is built around costing nothing.
+            if (provider == AiProvider.OPENROUTER && lower.endsWith(":free")) s += 100
+            if (lower.contains("flash")) s += 40
+            if (lower.contains("instant") || lower.contains("mini") || lower.contains("lite")) s += 20
+            if (lower.contains("chat") || lower.contains("instruct") || lower.contains("versatile")) s += 15
+            if (lower.contains("latest")) s += 10
+            // Preview and experimental builds are likelier to disappear.
+            if (lower.contains("preview") || lower.contains("exp")) s -= 25
+            if (lower.contains("thinking") || lower.contains("reasoner")) s -= 10
+            return s
+        }
+        return candidates.maxByOrNull { score(it) }
+    }
+
     /**
      * Asks the provider which models this key can actually call.
      *
@@ -174,16 +247,27 @@ class AiClient {
             error?.optString("message").takeUnless { it.isNullOrBlank() }
         }.getOrNull()
 
-        return when (code) {
-            400 -> detail ?: "The provider rejected the request (HTTP 400)."
+        // The provider's own message is always appended when present — swallowing
+        // it cost several rounds of guessing at what "not found" actually meant.
+        val friendly = when (code) {
+            400 -> "The provider rejected the request (HTTP 400)."
             401, 403 -> "Key rejected (HTTP $code). Check it's correct and still active."
             402 -> "This model needs credit on your account. Try a free model instead."
-            404 ->
-                "That model isn't available to your key. Tap \"Load my models\" in Setup " +
-                    "to see exactly which ones you can use."
+            404 -> "That model isn't available to your key (HTTP 404)."
             429 -> "Rate limited. Free tiers cap requests — wait a moment and retry."
             in 500..599 -> "The provider is having problems (HTTP $code). Try again shortly."
-            else -> detail ?: "Request failed (HTTP $code)."
+            else -> "Request failed (HTTP $code)."
         }
+        return if (detail.isNullOrBlank()) friendly else "$friendly\n\n$detail"
+    }
+
+    /** True when a failure looks like the model id was the problem, not the key. */
+    fun isModelProblem(message: String): Boolean {
+        val m = message.lowercase()
+        return m.contains("404") ||
+            m.contains("not found") ||
+            m.contains("does not exist") ||
+            m.contains("not supported") ||
+            m.contains("no endpoints found")
     }
 }

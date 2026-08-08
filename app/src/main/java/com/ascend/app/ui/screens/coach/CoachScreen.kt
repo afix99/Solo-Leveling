@@ -97,6 +97,18 @@ fun CoachScreen(repository: AscendRepository, onOpenSetup: () -> Unit) {
                 }
             }
 
+            vm.notice?.let { message ->
+                item {
+                    GlassCard(
+                        accent = AscendColors.Amber,
+                        modifier = Modifier.clickable { vm.clearNotice() },
+                    ) {
+                        Text(message, color = AscendColors.Amber, fontSize = 12.sp)
+                        Text("Tap to dismiss", color = AscendColors.TextTertiary, fontSize = 10.sp)
+                    }
+                }
+            }
+
             vm.error?.let { message ->
                 item {
                     GlassCard(
