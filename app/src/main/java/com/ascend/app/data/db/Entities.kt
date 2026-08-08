@@ -76,6 +76,10 @@ data class HunterProfileEntity(
      * than needing a scheduled job to clear it. */
     val manaConvertedDate: String? = null,
     val manaConvertedXpToday: Int = 0,
+    /** Audio and haptic cues. Both off by default — an app that chirps in a
+     * meeting is an app that gets uninstalled, so the user opts in. */
+    val soundEnabled: Boolean = false,
+    val hapticsEnabled: Boolean = false,
     /** Manually spent stat points, on top of levels earned from XP. */
     val allocatedPoints: Map<Stat, Int> = emptyMap(),
     val unlockedSkills: Set<Skill> = emptySet(),
@@ -237,3 +241,24 @@ data class ChatMessageEntity(
     val content: String,
     val createdAtEpochMillis: Long,
 )
+
+/**
+ * Cloud backup configuration. Singleton row, like the profile.
+ *
+ * The Hunter Key is the only credential: the server stores just its hash, so
+ * it is the sole way back to a backup. That is stated in the UI, because it
+ * also means losing it loses the backup.
+ */
+@Entity(tableName = "cloud_settings")
+data class CloudSettingsEntity(
+    @PrimaryKey val id: Int = SINGLETON_ID,
+    val baseUrl: String = "",
+    val hunterKey: String = "",
+    val autoBackup: Boolean = true,
+    val lastBackupAtEpochMillis: Long? = null,
+    val lastBackupStatus: String? = null,
+) {
+    companion object {
+        const val SINGLETON_ID = 0
+    }
+}

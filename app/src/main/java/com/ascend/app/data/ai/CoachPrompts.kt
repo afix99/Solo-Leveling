@@ -19,6 +19,12 @@ data class CoachContext(
     val missesLast30Days: Int,
     val completionRateLast30: Int,
     val athlete: AthleteProfile,
+    /**
+     * Server-computed history analytics, when a backup exists. Pre-rendered as
+     * lines rather than passed as a parsed structure: the shape is the
+     * server's to define, and the prompt only ever needs to read it.
+     */
+    val serverInsights: List<String> = emptyList(),
 )
 
 data class HabitSnapshot(
@@ -150,6 +156,15 @@ Hard limits on the persona:
 
     /** The shared data snapshot used by both reports and chat. */
     private fun dataBlock(ctx: CoachContext): String = buildString {
+        // Server findings first: they cover more history than the phone keeps
+        // handy, so they should anchor the model's reading before the
+        // short-window numbers below refine it.
+        if (ctx.serverInsights.isNotEmpty()) {
+            appendLine("## Long-range findings (computed from full backup history)")
+            ctx.serverInsights.forEach { appendLine("- ${'$'}it") }
+            appendLine()
+        }
+
         appendLine("## Progression")
         appendLine("- Level ${ctx.hunterLevel}, ${ctx.rank.displayName}")
         ctx.statLevels.forEach { (stat, level) ->

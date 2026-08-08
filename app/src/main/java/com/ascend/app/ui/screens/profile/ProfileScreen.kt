@@ -42,6 +42,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ascend.app.data.db.HunterProfileEntity
 import com.ascend.app.data.repo.AscendRepository
+import com.ascend.app.feedback.SystemFeedback
 import com.ascend.app.notifications.NotificationScheduler
 import com.ascend.app.ui.SimpleViewModelFactory
 import com.ascend.app.ui.components.Eyebrow
@@ -62,6 +63,7 @@ fun ProfileScreen(
     onOpenAchievements: () -> Unit,
     onOpenStats: () -> Unit,
     onOpenShop: () -> Unit,
+    onOpenCloud: () -> Unit,
 ) {
     val vm: ProfileViewModel = viewModel(factory = SimpleViewModelFactory { ProfileViewModel(repository) })
     val profile by vm.profile.collectAsStateWithLifecycle()
@@ -157,6 +159,8 @@ fun ProfileScreen(
             GlassCard(accent = AscendColors.AccentBlue) {
                 MenuRow("Shop", onOpenShop)
                 Spacer(Modifier.height(4.dp))
+                MenuRow("Cloud backup", onOpenCloud)
+                Spacer(Modifier.height(4.dp))
                 MenuRow("Stat breakdown", onOpenStats)
                 Spacer(Modifier.height(4.dp))
                 MenuRow("Achievements & Titles", onOpenAchievements)
@@ -166,6 +170,64 @@ fun ProfileScreen(
                 MenuRow("Lies vs Truths", onOpenLiesTruths)
                 Spacer(Modifier.height(4.dp))
                 MenuRow("How it works", onOpenHowItWorks)
+            }
+        }
+
+        item {
+            GlassCard {
+                Eyebrow("Feedback")
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Both off by default. Sound is synthesised in the app, so it adds nothing " +
+                        "to download and nothing plays unless you turn it on.",
+                    color = AscendColors.TextTertiary,
+                    fontSize = 11.sp,
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Sound cues", color = AscendColors.TextPrimary, fontSize = 14.sp)
+                    Switch(
+                        checked = current.soundEnabled,
+                        onCheckedChange = { enabled ->
+                            vm.save(current.copy(soundEnabled = enabled))
+                            // Play the cue as it is switched on, so the user
+                            // hears exactly what they just agreed to.
+                            if (enabled) {
+                                SystemFeedback.play(
+                                    context,
+                                    SystemFeedback.Cue.LEVEL_UP,
+                                    soundEnabled = true,
+                                    hapticsEnabled = current.hapticsEnabled,
+                                )
+                            }
+                        },
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Haptics", color = AscendColors.TextPrimary, fontSize = 14.sp)
+                    Switch(
+                        checked = current.hapticsEnabled,
+                        onCheckedChange = { enabled ->
+                            vm.save(current.copy(hapticsEnabled = enabled))
+                            if (enabled) {
+                                SystemFeedback.play(
+                                    context,
+                                    SystemFeedback.Cue.HABIT_DONE,
+                                    soundEnabled = false,
+                                    hapticsEnabled = true,
+                                )
+                            }
+                        },
+                    )
+                }
             }
         }
 

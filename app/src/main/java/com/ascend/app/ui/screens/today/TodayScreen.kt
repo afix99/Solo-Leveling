@@ -60,6 +60,7 @@ import com.ascend.app.domain.Rank
 import com.ascend.app.domain.StarterHabits
 import com.ascend.app.domain.StarterPack
 import com.ascend.app.domain.Stat
+import com.ascend.app.feedback.SystemFeedback
 import com.ascend.app.focus.FocusSessionActivity
 import com.ascend.app.ui.SimpleViewModelFactory
 import com.ascend.app.ui.components.Eyebrow
@@ -109,7 +110,15 @@ fun TodayScreen(repository: AscendRepository, onOpenHabits: () -> Unit) {
         previousTotalXp?.let { prev ->
             val prevRank = Leveling.rankForTotalXp(prev)
             val newRank = Leveling.rankForTotalXp(totalXp)
-            if (newRank.ordinal > prevRank.ordinal) rankUpToShow = newRank
+            if (newRank.ordinal > prevRank.ordinal) {
+                rankUpToShow = newRank
+                SystemFeedback.play(
+                    context,
+                    SystemFeedback.Cue.RANK_UP,
+                    soundEnabled = hunterProfile?.soundEnabled == true,
+                    hapticsEnabled = hunterProfile?.hapticsEnabled == true,
+                )
+            }
         }
         previousTotalXp = totalXp
     }
@@ -126,6 +135,12 @@ fun TodayScreen(repository: AscendRepository, onOpenHabits: () -> Unit) {
                 val newLevel = Leveling.levelForXp(xp)
                 if (newLevel > prevLevel) {
                     statLevelUpToShow = stat to newLevel
+                    SystemFeedback.play(
+                        context,
+                        SystemFeedback.Cue.LEVEL_UP,
+                        soundEnabled = hunterProfile?.soundEnabled == true,
+                        hapticsEnabled = hunterProfile?.hapticsEnabled == true,
+                    )
                     break
                 }
             }
@@ -181,7 +196,17 @@ fun TodayScreen(repository: AscendRepository, onOpenHabits: () -> Unit) {
                         habit = habit,
                         log = logsByHabit[habit.id],
                         accent = AscendColors.Amber,
-                        onToggle = { checked -> vm.toggleHabit(habit, checked) },
+                        onToggle = { checked ->
+                            vm.toggleHabit(habit, checked)
+                            if (checked) {
+                                SystemFeedback.play(
+                                    context,
+                                    SystemFeedback.Cue.HABIT_DONE,
+                                    soundEnabled = hunterProfile?.soundEnabled == true,
+                                    hapticsEnabled = hunterProfile?.hapticsEnabled == true,
+                                )
+                            }
+                        },
                         onFocus = { context.launchFocusSession(habit.id) },
                     )
                 }
@@ -204,7 +229,17 @@ fun TodayScreen(repository: AscendRepository, onOpenHabits: () -> Unit) {
                     habit = habit,
                     log = logsByHabit[habit.id],
                     accent = AscendColors.AccentBlue,
-                    onToggle = { checked -> vm.toggleHabit(habit, checked) },
+                    onToggle = { checked ->
+                            vm.toggleHabit(habit, checked)
+                            if (checked) {
+                                SystemFeedback.play(
+                                    context,
+                                    SystemFeedback.Cue.HABIT_DONE,
+                                    soundEnabled = hunterProfile?.soundEnabled == true,
+                                    hapticsEnabled = hunterProfile?.hapticsEnabled == true,
+                                )
+                            }
+                        },
                     onFocus = { context.launchFocusSession(habit.id) },
                 )
             }
@@ -235,7 +270,17 @@ fun TodayScreen(repository: AscendRepository, onOpenHabits: () -> Unit) {
                             habit = habit,
                             log = logsByHabit[habit.id],
                             accent = AscendColors.AccentBlue,
-                            onToggle = { checked -> vm.toggleHabit(habit, checked) },
+                            onToggle = { checked ->
+                            vm.toggleHabit(habit, checked)
+                            if (checked) {
+                                SystemFeedback.play(
+                                    context,
+                                    SystemFeedback.Cue.HABIT_DONE,
+                                    soundEnabled = hunterProfile?.soundEnabled == true,
+                                    hapticsEnabled = hunterProfile?.hapticsEnabled == true,
+                                )
+                            }
+                        },
                             onFocus = { context.launchFocusSession(habit.id) },
                         )
                     }

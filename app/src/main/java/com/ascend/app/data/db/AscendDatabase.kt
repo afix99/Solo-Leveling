@@ -27,8 +27,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AiSettingsEntity::class,
         CoachAdviceEntity::class,
         ChatMessageEntity::class,
+        CloudSettingsEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -50,10 +51,11 @@ abstract class AscendDatabase : RoomDatabase() {
     abstract fun aiSettingsDao(): AiSettingsDao
     abstract fun coachAdviceDao(): CoachAdviceDao
     abstract fun chatMessageDao(): ChatMessageDao
+    abstract fun cloudSettingsDao(): CloudSettingsDao
 
     companion object {
         /** Mirrors the @Database version so other layers can record it. */
-        const val SCHEMA_VERSION = 6
+        const val SCHEMA_VERSION = 7
 
         /**
          * v2 adds the economy layer: Gold, titles, classes, rewards,
@@ -229,6 +231,30 @@ abstract class AscendDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v7 adds cloud backup settings and the sound/haptics toggles. Both
+         * feedback flags default to 0 so upgrading never makes a silent app
+         * start making noise.
+         */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN soundEnabled INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN hapticsEnabled INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS cloud_settings (
+                        id INTEGER NOT NULL PRIMARY KEY,
+                        baseUrl TEXT NOT NULL DEFAULT '',
+                        hunterKey TEXT NOT NULL DEFAULT '',
+                        autoBackup INTEGER NOT NULL DEFAULT 1,
+                        lastBackupAtEpochMillis INTEGER,
+                        lastBackupStatus TEXT
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
         @Volatile private var instance: AscendDatabase? = null
 
         fun getInstance(context: Context): AscendDatabase =
@@ -238,7 +264,7 @@ abstract class AscendDatabase : RoomDatabase() {
                     AscendDatabase::class.java,
                     "ascend.db",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                     .build()
                     .also { instance = it }
             }

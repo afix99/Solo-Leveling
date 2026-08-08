@@ -18,6 +18,8 @@ import com.ascend.app.data.db.ShadowEntity
 import com.ascend.app.data.db.StatProgressEntity
 import com.ascend.app.data.db.UnlockedAchievementEntity
 import com.ascend.app.data.db.WeeklyReviewEntity
+import com.ascend.app.data.cloud.CloudSnapshot
+import com.ascend.app.data.db.CloudSettingsEntity
 import com.ascend.app.data.ai.CoachContext
 import com.ascend.app.data.ai.HabitSnapshot
 import com.ascend.app.domain.Achievement
@@ -44,6 +46,7 @@ import com.ascend.app.domain.StarterPack
 import com.ascend.app.domain.Stat
 import com.ascend.app.domain.StatEffects
 import androidx.room.withTransaction
+import org.json.JSONObject
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlinx.coroutines.Dispatchers
@@ -74,6 +77,7 @@ class AscendRepository(private val db: AscendDatabase) {
     private val aiSettingsDao = db.aiSettingsDao()
     private val coachAdviceDao = db.coachAdviceDao()
     private val chatMessageDao = db.chatMessageDao()
+    private val cloudSettingsDao = db.cloudSettingsDao()
 
     // ---- Observing state -------------------------------------------------
 
@@ -722,6 +726,135 @@ class AscendRepository(private val db: AscendDatabase) {
         if (!Skill.canUnlock(skill, level, rank, profile.unlockedSkills)) return false
         hunterProfileDao.upsert(profile.copy(unlockedSkills = profile.unlockedSkills + skill))
         return true
+    }
+
+    // ---- Cloud backup -------------------------------------------------------
+
+    fun observeCloudSettings(): Flow<CloudSettingsEntity?> = cloudSettingsDao.observe()
+
+    suspend fun getCloudSettings(): CloudSettingsEntity =
+        cloudSettingsDao.get() ?: CloudSettingsEntity()
+
+    suspend fun saveCloudSettings(settings: CloudSettingsEntity) =
+        cloudSettingsDao.upsert(settings)
+
+    /** Assembles the full backup body: snapshot plus the flattened facts. */
+    suspend fun buildCloudBackupBody(): JSONObject = withContext(Dispatchers.IO) {
+        val habits = habitDao.getActiveHabits()
+        val logs = dailyLogDao.getAll()
+        val profile = getHunterProfile()
+
+        val focusMinutesByDate = focusSessionDao.getAll()
+            .filter { it.completed }
+            .groupBy {
+                java.time.Instant.ofEpochMilli(it.startTimeEpochMillis)
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDate()
+                    .toString()
+            }
+            .mapValues { (_, sessions) -> sessions.sumOf { it.actualDurationSeconds } / 60 }
+
+        JSONObject().apply {
+            put("schemaVersion", AscendDatabase.SCHEMA_VERSION)
+            put("hunterName", profile.hunterName)
+            put(
+                "payload",
+                CloudSnapshot.build(
+                    profile = profile,
+                    habits = habits,
+                    logs = logs,
+                    stats = statProgressDao.getAll(),
+                    rewards = rewardDao.getAll(),
+                    shadows = shadowDao.getAll(),
+                    liesTruths = lieTruthDao.getAll(),
+                ),
+            )
+            put("days", CloudSnapshot.dayFacts(habits, logs, focusMinutesByDate))
+            put("habits", CloudSnapshot.habitFacts(habits, logs))
+        }
+    }
+
+    /**
+     * Writes a downloaded snapshot back into the local database.
+     *
+     * Merges rather than wipes: habits are matched by name, so restoring onto a
+     * device that already has some of them updates those and adds the rest
+     * instead of leaving duplicates. Stat XP is taken as the maximum of local
+     * and backup, never the sum — restoring twice must not double a level, and
+     * must never cost progress made since the backup was taken.
+     *
+     * Returns how many habits and logs were written.
+     */
+    suspend fun restoreFromSnapshot(snapshot: JSONObject): Pair<Int, Int> = db.withTransaction {
+        val existingByName = habitDao.getActiveHabits().associateBy { it.name.lowercase() }
+
+        var habitsWritten = 0
+        val idByName = mutableMapOf<String, Long>()
+        for (restored in CloudSnapshot.readHabits(snapshot)) {
+            val key = restored.name.lowercase()
+            val existing = existingByName[key]
+            val id = if (existing != null) {
+                habitDao.update(
+                    existing.copy(
+                        stat = restored.stat,
+                        isNonNegotiable = restored.nonNegotiable,
+                        isFocusEnabled = restored.focusEnabled,
+                        targetDurationMinutes = restored.targetDurationMinutes,
+                    ),
+                )
+                existing.id
+            } else {
+                habitDao.insert(
+                    HabitEntity(
+                        name = restored.name,
+                        stat = restored.stat,
+                        isNonNegotiable = restored.nonNegotiable,
+                        isFocusEnabled = restored.focusEnabled,
+                        targetDurationMinutes = restored.targetDurationMinutes,
+                        createdAt = System.currentTimeMillis(),
+                    ),
+                )
+            }
+            idByName[key] = id
+            habitsWritten += 1
+        }
+
+        var logsWritten = 0
+        for (log in CloudSnapshot.readLogs(snapshot)) {
+            val habitId = idByName[log.habitName.lowercase()] ?: continue
+            val existing = dailyLogDao.getForHabitAndDate(habitId, log.date)
+            dailyLogDao.upsert(
+                DailyLogEntity(
+                    id = existing?.id ?: 0,
+                    habitId = habitId,
+                    date = log.date,
+                    completed = log.completed,
+                    xpAwarded = log.xp,
+                    goldAwarded = log.gold,
+                    isPenaltyQuest = log.penaltyQuest,
+                    streakAtCompletion = log.streak,
+                ),
+            )
+            logsWritten += 1
+        }
+
+        for ((stat, xp) in CloudSnapshot.readStats(snapshot)) {
+            val current = statProgressDao.get(stat)?.xp ?: 0
+            statProgressDao.upsert(StatProgressEntity(stat, maxOf(current, xp)))
+        }
+
+        val (name, gold, perfectDays) = CloudSnapshot.readProfileBasics(snapshot)
+        val profile = getHunterProfile()
+        hunterProfileDao.upsert(
+            profile.copy(
+                hunterName = name ?: profile.hunterName,
+                gold = maxOf(profile.gold, gold),
+                perfectDays = maxOf(profile.perfectDays, perfectDays),
+                onboardingComplete = true,
+            ),
+        )
+
+        habitsWritten to logsWritten
     }
 
     // ---- Mana Conversion ----------------------------------------------------

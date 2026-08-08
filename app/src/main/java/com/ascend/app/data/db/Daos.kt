@@ -31,6 +31,10 @@ interface HabitDao {
 
 @Dao
 interface DailyLogDao {
+    /** Every log, for building a cloud snapshot. */
+    @Query("SELECT * FROM daily_logs ORDER BY date")
+    suspend fun getAll(): List<DailyLogEntity>
+
     @Query("SELECT * FROM daily_logs WHERE habitId = :habitId AND date = :date LIMIT 1")
     suspend fun getForHabitAndDate(habitId: Long, date: String): DailyLogEntity?
 
@@ -106,6 +110,9 @@ interface HunterProfileDao {
 
 @Dao
 interface LieTruthDao {
+    @Query("SELECT * FROM lies_truths")
+    suspend fun getAll(): List<LieTruthEntity>
+
     @Query("SELECT * FROM lies_truths ORDER BY createdAt DESC")
     fun observeAll(): Flow<List<LieTruthEntity>>
 
@@ -133,6 +140,9 @@ interface WeeklyReviewDao {
 
 @Dao
 interface FocusSessionDao {
+    @Query("SELECT * FROM focus_sessions")
+    suspend fun getAll(): List<FocusSessionEntity>
+
     @Query("SELECT * FROM focus_sessions WHERE habitId = :habitId ORDER BY startTimeEpochMillis DESC LIMIT 3")
     suspend fun lastThreeForHabit(habitId: Long): List<FocusSessionEntity>
 
@@ -160,6 +170,9 @@ interface FocusSessionDao {
 
 @Dao
 interface RewardDao {
+    @Query("SELECT * FROM rewards")
+    suspend fun getAll(): List<RewardEntity>
+
     @Query("SELECT * FROM rewards WHERE archived = 0 ORDER BY goldCost ASC")
     fun observeActive(): Flow<List<RewardEntity>>
 
@@ -296,4 +309,16 @@ interface ChatMessageDao {
 
     @Query("DELETE FROM chat_messages")
     suspend fun clear()
+}
+
+@Dao
+interface CloudSettingsDao {
+    @Query("SELECT * FROM cloud_settings WHERE id = ${CloudSettingsEntity.SINGLETON_ID}")
+    fun observe(): Flow<CloudSettingsEntity?>
+
+    @Query("SELECT * FROM cloud_settings WHERE id = ${CloudSettingsEntity.SINGLETON_ID}")
+    suspend fun get(): CloudSettingsEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(settings: CloudSettingsEntity)
 }

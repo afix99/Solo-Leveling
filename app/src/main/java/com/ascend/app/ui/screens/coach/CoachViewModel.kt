@@ -13,6 +13,9 @@ import com.ascend.app.data.ai.ModelListResult
 import com.ascend.app.data.db.AiSettingsEntity
 import com.ascend.app.data.db.ChatMessageEntity
 import com.ascend.app.data.db.CoachAdviceEntity
+import com.ascend.app.data.cloud.CloudClient
+import com.ascend.app.data.cloud.CloudInsights
+import com.ascend.app.data.cloud.CloudResult
 import com.ascend.app.data.repo.AscendRepository
 import com.ascend.app.domain.AdviceType
 import java.time.LocalDate
@@ -48,6 +51,25 @@ class CoachViewModel(private val repository: AscendRepository) : ViewModel() {
 
     val provider: AiProvider
         get() = runCatching { AiProvider.valueOf(settings.provider) }.getOrDefault(AiProvider.OPENROUTER)
+
+
+    private val cloudClient = CloudClient()
+
+    /**
+     * Fetches the server's long-range findings, if a backup is configured.
+     *
+     * Best-effort by design: the coach worked before the backend existed and
+     * must keep working when it is unreachable, so a failure here degrades the
+     * advice rather than blocking it.
+     */
+    private suspend fun serverInsights(): List<String> {
+        val cloud = repository.getCloudSettings()
+        if (cloud.baseUrl.isBlank() || cloud.hunterKey.isBlank()) return emptyList()
+        return when (val result = cloudClient.report(cloud.baseUrl, cloud.hunterKey)) {
+            is CloudResult.Ok -> CloudInsights.fromReport(result.value)
+            is CloudResult.Failure -> emptyList()
+        }
+    }
 
     var generating by mutableStateOf<AdviceType?>(null)
         private set
@@ -111,6 +133,7 @@ class CoachViewModel(private val repository: AscendRepository) : ViewModel() {
             }
 
             val ctx = repository.buildCoachContext(LocalDate.now())
+                .copy(serverInsights = serverInsights())
             val (system, user) = CoachPrompts.build(type, ctx, current.systemVoice)
 
             val resolved = client.completeAutoRecovering(
@@ -232,6 +255,7 @@ class CoachViewModel(private val repository: AscendRepository) : ViewModel() {
             }
 
             val ctx = repository.buildCoachContext(LocalDate.now())
+                .copy(serverInsights = serverInsights())
             val systemPrompt = CoachPrompts.chatSystemPrompt(ctx, current.systemVoice)
             val history = repository.recentChat().map { AiClient.ChatTurn(it.role, it.content) }
 

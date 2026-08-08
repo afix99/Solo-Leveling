@@ -5,6 +5,8 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.ascend.app.AscendApplication
 import java.time.DayOfWeek
+import com.ascend.app.data.cloud.CloudClient
+import com.ascend.app.data.cloud.CloudResult
 import java.time.LocalDate
 import kotlinx.coroutines.flow.first
 
@@ -87,6 +89,30 @@ class MidnightRolloverWorker(context: Context, params: WorkerParameters) : Corou
         if (today.dayOfWeek == DayOfWeek.MONDAY) {
             repo.generateWeeklyReview(today.minusDays(7))
         }
+
+        // Back up after the rollover, so the copy includes the day that just
+        // settled. Failure is deliberately not retried and never fails the
+        // worker: the rollover is the load-bearing part, and a missed backup
+        // is recoverable by opening the app, whereas a retried worker could
+        // re-run the rollover it already did.
+        val cloud = repo.getCloudSettings()
+        if (cloud.autoBackup && cloud.baseUrl.isNotBlank() && cloud.hunterKey.isNotBlank()) {
+            runCatching {
+                val body = repo.buildCloudBackupBody()
+                when (val result = CloudClient().backup(cloud.baseUrl, cloud.hunterKey, body)) {
+                    is CloudResult.Ok -> repo.saveCloudSettings(
+                        cloud.copy(
+                            lastBackupAtEpochMillis = System.currentTimeMillis(),
+                            lastBackupStatus = "OK",
+                        ),
+                    )
+                    is CloudResult.Failure -> repo.saveCloudSettings(
+                        cloud.copy(lastBackupStatus = result.message),
+                    )
+                }
+            }
+        }
+
         return Result.success()
     }
 }
