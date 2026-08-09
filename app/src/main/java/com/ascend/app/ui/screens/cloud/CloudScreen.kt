@@ -35,6 +35,7 @@ import com.ascend.app.ui.SimpleViewModelFactory
 import com.ascend.app.ui.components.Eyebrow
 import com.ascend.app.ui.components.GlassCard
 import com.ascend.app.ui.components.SystemPanel
+import com.ascend.app.ui.components.ScreenHeader
 import com.ascend.app.ui.theme.AscendColors
 import java.time.Instant
 import java.time.ZoneId
@@ -57,13 +58,7 @@ fun CloudScreen(repository: AscendRepository) {
     var confirmRestore by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize().background(AscendColors.Background)) {
-        Text(
-            "CLOUD",
-            color = AscendColors.TextPrimary,
-            fontWeight = FontWeight.ExtraBold,
-            fontSize = 22.sp,
-            modifier = Modifier.padding(start = 18.dp, top = 20.dp),
-        )
+        ScreenHeader("Cloud")
 
         LazyColumn(
             contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 10.dp, bottom = 30.dp),

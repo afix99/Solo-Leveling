@@ -54,6 +54,9 @@ import com.ascend.app.ui.components.GlassCard
 import com.ascend.app.ui.components.Pill
 import com.ascend.app.ui.components.ProgressBar
 import com.ascend.app.ui.components.SystemPanel
+import com.ascend.app.ui.components.ScreenHeader
+import com.ascend.app.ui.components.SegmentedToggle
+import com.ascend.app.ui.theme.Space
 import com.ascend.app.ui.theme.AscendColors
 import com.ascend.app.ui.theme.color
 
@@ -72,40 +75,15 @@ fun SystemScreen(repository: AscendRepository) {
     LaunchedEffect(shadows.size) { vm.refresh() }
 
     Column(modifier = Modifier.fillMaxSize().background(AscendColors.Background)) {
-        Text(
-            "SYSTEM",
-            color = AscendColors.TextPrimary,
-            fontWeight = FontWeight.ExtraBold,
-            fontSize = 22.sp,
-            modifier = Modifier.padding(start = 18.dp, top = 20.dp),
+        ScreenHeader("System")
+        SegmentedToggle(
+            options = Tab.entries.toList(),
+            selected = tab,
+            label = { it.label },
+            onSelect = { tab = it },
+            fillWidth = true,
+            modifier = Modifier.padding(horizontal = Space.xl, vertical = Space.sm),
         )
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Tab.entries.forEach { t ->
-                val selected = t == tab
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(50))
-                        .background(
-                            if (selected) AscendColors.AccentBlue.copy(alpha = 0.2f)
-                            else AscendColors.SurfaceElevated,
-                        )
-                        .clickable { tab = t }
-                        .padding(vertical = 8.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        t.label,
-                        color = if (selected) AscendColors.AccentBlue else AscendColors.TextTertiary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-            }
-        }
 
         vm.message?.let { msg ->
             GlassCard(

@@ -1,27 +1,20 @@
 package com.ascend.app.ui.screens.history
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -29,16 +22,22 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ascend.app.data.repo.AscendRepository
 import com.ascend.app.domain.History
 import com.ascend.app.ui.SimpleViewModelFactory
-import com.ascend.app.ui.components.Eyebrow
+import com.ascend.app.ui.components.EmptyState
+import com.ascend.app.ui.components.Footnote
 import com.ascend.app.ui.components.GlassCard
 import com.ascend.app.ui.components.HabitHeatmap
 import com.ascend.app.ui.components.HeatmapLegend
 import com.ascend.app.ui.components.LabelledBar
 import com.ascend.app.ui.components.Pill
-import com.ascend.app.ui.components.StatTile
-import com.ascend.app.ui.components.SystemPanel
+import com.ascend.app.ui.components.ScreenHeader
+import com.ascend.app.ui.components.ScreenScaffold
+import com.ascend.app.ui.components.SectionHeader
+import com.ascend.app.ui.components.SegmentedToggle
 import com.ascend.app.ui.components.TrendLine
 import com.ascend.app.ui.theme.AscendColors
+import com.ascend.app.ui.theme.Space
+import com.ascend.app.ui.theme.SurfaceLevel
+import com.ascend.app.ui.theme.Type
 import com.ascend.app.ui.theme.color
 import java.time.format.TextStyle
 import java.util.Locale
@@ -47,8 +46,8 @@ import java.util.Locale
  * History: what actually happened, as opposed to what the System says you are.
  *
  * The Stats screen answers "how strong am I"; this one answers "am I holding
- * up, and where am I leaking". It is built from local logs only, so it works
- * with no backup configured and no connection.
+ * up, and where am I leaking". Built from local logs only, so it works with no
+ * backup configured and no connection.
  */
 @Composable
 fun HistoryScreen(repository: AscendRepository) {
@@ -56,151 +55,140 @@ fun HistoryScreen(repository: AscendRepository) {
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refresh() }
 
     val data = vm.data
-
-    Column(modifier = Modifier.fillMaxSize().background(AscendColors.Background)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, top = 20.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "HISTORY",
-                color = AscendColors.TextPrimary,
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = 22.sp,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                HistoryRange.entries.forEach { option ->
-                    val selected = option == vm.range
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(
-                                if (selected) AscendColors.AccentBlue.copy(alpha = 0.2f)
-                                else AscendColors.SurfaceElevated,
-                            )
-                            .clickable { vm.selectRange(option) }
-                            .padding(horizontal = 11.dp, vertical = 6.dp),
-                    ) {
-                        Text(
-                            option.label,
-                            color = if (selected) AscendColors.AccentBlue else AscendColors.TextTertiary,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                }
-            }
-        }
-
-        if (data == null) {
+    if (data == null) {
+        Column(modifier = Modifier.fillMaxSize().background(AscendColors.Background)) {
+            ScreenHeader("History", subtitle = "What actually happened")
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
                     if (vm.loading) "Reading your history…" else "No history yet.",
                     color = AscendColors.TextTertiary,
-                    fontSize = 13.sp,
+                    fontSize = Type.bodySize,
                 )
             }
-            return@Column
+        }
+        return
+    }
+
+    val tracked = data.summaries.filterNot { it.isUntracked }
+
+    ScreenScaffold(
+        title = "History",
+        subtitle = "${tracked.size} days on record",
+        actions = {
+            SegmentedToggle(
+                options = HistoryRange.entries.toList(),
+                selected = vm.range,
+                label = { it.label },
+                onSelect = vm::selectRange,
+            )
+        },
+    ) {
+        if (tracked.isEmpty()) {
+            item {
+                EmptyState(
+                    title = "Nothing logged yet",
+                    body = "Charts appear once you have a few days behind you. " +
+                        "Tick some habits off on Today and come back.",
+                    accent = AscendColors.Amber,
+                )
+            }
+            return@ScreenScaffold
         }
 
-        val tracked = data.summaries.filterNot { it.isUntracked }
+        item { HeadlineCard(data, tracked.size) }
+        item { HeatmapCard(data) }
+        item { MomentumCard(data) }
+        item { WeekdayCard(data) }
 
-        LazyColumn(
-            contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 10.dp, bottom = 30.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            // A screen full of zeroes looks broken. Say plainly that the data
-            // simply isn't there yet, and what will make it appear.
-            if (tracked.isEmpty()) {
-                item {
-                    SystemPanel(accent = AscendColors.Amber, modifier = Modifier.fillMaxWidth()) {
-                        Eyebrow("Nothing logged yet", color = AscendColors.Amber)
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            "Charts appear once you have a few days of completions behind you. " +
-                                "Tick some habits off on Today and come back.",
-                            color = AscendColors.TextSecondary,
-                            fontSize = 12.sp,
-                        )
-                    }
-                }
-                return@LazyColumn
-            }
+        item { SectionHeader("Per habit", trailing = "${data.trends.size} tracked") }
+        items(data.trends.size, key = { data.trends[it].habitId }) { index ->
+            HabitTrendCard(data.trends[index])
+        }
 
-            item { SummaryCard(data, tracked.size) }
-            item { HeatmapCard(data) }
-            item { MomentumCard(data) }
-            item { WeekdayCard(data) }
+        item {
+            Footnote(
+                "Built from this phone's own logs, so it works offline. Backing up gives " +
+                    "the Coach a longer view than shown here.",
+            )
+        }
+    }
+}
 
-            item { Eyebrow("Per habit", modifier = Modifier.padding(top = 6.dp)) }
-            items(data.trends, key = { it.habitId }) { trend -> HabitTrendCard(trend) }
+/**
+ * The headline: the live streak, then everything else.
+ *
+ * The current run is the one number a habit app exists to show, so it gets the
+ * size and the colour and the rest arrange themselves around it. The previous
+ * version gave seven numbers identical weight, which left the eye nowhere to
+ * land — a grid of equals reads as a spreadsheet, not an answer.
+ */
+@Composable
+private fun HeadlineCard(data: AscendRepository.HistoryData, trackedDays: Int) {
+    val perfect = data.summaries.count { it.isPerfect }
 
-            item {
-                Spacer(Modifier.height(4.dp))
+    GlassCard(
+        accent = AscendColors.AccentBlue,
+        level = SurfaceLevel.Raised,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(
+                "${data.currentPerfectRun}",
+                color = AscendColors.Success,
+                fontSize = 52.sp,
+                fontWeight = Type.displayWeight,
+            )
+            Spacer(Modifier.width(Space.md))
+            Column {
                 Text(
-                    "Built from this phone's own logs, so it works offline. Backing up gives " +
-                        "the Coach a longer view than shown here.",
+                    if (data.currentPerfectRun == 1) "perfect day" else "perfect days",
+                    color = AscendColors.TextPrimary,
+                    fontSize = Type.titleSize,
+                    fontWeight = Type.titleWeight,
+                )
+                Text(
+                    "in a row, right now",
                     color = AscendColors.TextTertiary,
-                    fontSize = 10.sp,
+                    fontSize = Type.captionSize,
                 )
             }
+        }
+
+        Spacer(Modifier.height(Space.lg))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            MiniStat("$perfect", "perfect", AscendColors.Success)
+            MiniStat("${data.longestPerfectRun}", "best run", AscendColors.Amber)
+            MiniStat("$trackedDays", "logged", AscendColors.TextPrimary)
+            MiniStat("${data.summaries.sumOf { it.xp }}", "XP", AscendColors.AccentBlue)
+            MiniStat("${data.focusMinutesByDate.values.sum()}", "focus", AscendColors.StatPer)
         }
     }
 }
 
 @Composable
-private fun SummaryCard(data: AscendRepository.HistoryData, trackedDays: Int) {
-    val perfect = data.summaries.count { it.isPerfect }
-    val totalXp = data.summaries.sumOf { it.xp }
-    val focus = data.focusMinutesByDate.values.sum()
-
-    SystemPanel(accent = AscendColors.AccentBlue, modifier = Modifier.fillMaxWidth()) {
-        Eyebrow("The window", color = AscendColors.AccentBlue)
-        Spacer(Modifier.height(10.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            StatTile("$perfect", "perfect days", AscendColors.Success)
-            StatTile("${data.currentPerfectRun}", "current run", AscendColors.AccentViolet)
-            StatTile("${data.longestPerfectRun}", "best run", AscendColors.Amber)
-            StatTile("$trackedDays", "days logged", AscendColors.TextPrimary)
-        }
-        Spacer(Modifier.height(10.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            StatTile("$totalXp", "XP earned", AscendColors.AccentBlue)
-            StatTile("$focus", "focus minutes", AscendColors.StatPer)
-            StatTile(
-                "${data.summaries.sumOf { it.gold }}",
-                "gold earned",
-                AscendColors.Amber,
-            )
-        }
+private fun MiniStat(value: String, caption: String, color: Color) {
+    Column {
+        Text(value, color = color, fontSize = Type.titleSize, fontWeight = Type.statWeight)
+        Text(caption, color = AscendColors.TextTertiary, fontSize = Type.labelSize)
     }
 }
 
 @Composable
 private fun HeatmapCard(data: AscendRepository.HistoryData) {
-    GlassCard {
-        Eyebrow("Every day in view")
-        Spacer(Modifier.height(10.dp))
-        HabitHeatmap(
-            days = data.summaries.map {
-                Triple(it.intensity, it.isPerfect, it.isUntracked)
-            },
-        )
-        Spacer(Modifier.height(10.dp))
+    GlassCard(modifier = Modifier.fillMaxWidth()) {
+        SectionHeader("Every day in view")
+        Spacer(Modifier.height(Space.md))
+        HabitHeatmap(days = data.summaries.map { Triple(it.intensity, it.isPerfect, it.isUntracked) })
+        Spacer(Modifier.height(Space.md))
         HeatmapLegend()
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(Space.sm))
         Text(
-            "Each square is a day, oldest at the left. Colour shows how much of " +
-                "that day's non-negotiables you cleared.",
+            "Oldest at the left. Colour shows how much of that day you cleared.",
             color = AscendColors.TextTertiary,
-            fontSize = 10.sp,
+            fontSize = Type.captionSize,
         )
     }
 }
@@ -214,15 +202,18 @@ private fun MomentumCard(data: AscendRepository.HistoryData) {
         else -> AscendColors.TextSecondary
     }
 
-    GlassCard(accent = accent) {
+    GlassCard(
+        accent = accent,
+        level = if (change != 0) SurfaceLevel.Raised else SurfaceLevel.Resting,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column {
-                Eyebrow("Momentum", color = accent)
-                Spacer(Modifier.height(4.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                SectionHeader("Momentum", color = accent)
                 Text(
                     when {
                         change > 0 -> "Up $change points"
@@ -230,23 +221,23 @@ private fun MomentumCard(data: AscendRepository.HistoryData) {
                         else -> "Holding steady"
                     },
                     color = AscendColors.TextPrimary,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 17.sp,
+                    fontSize = Type.statSize,
+                    fontWeight = Type.statWeight,
                 )
                 Text(
-                    "Last ${History.TREND_WINDOW_DAYS} days ${data.momentum.recentRate}% " +
-                        "vs ${data.momentum.priorRate}% before",
+                    "${data.momentum.recentRate}% this fortnight, " +
+                        "${data.momentum.priorRate}% the one before",
                     color = AscendColors.TextTertiary,
-                    fontSize = 11.sp,
+                    fontSize = Type.captionSize,
                 )
             }
+            if (change != 0) Pill(if (change > 0) "▲" else "▼", accent)
         }
-        Spacer(Modifier.height(10.dp))
-        // XP per day carries the shape of effort even on days where the
-        // non-negotiable count changed, so it makes a more honest trend line
-        // than a raw completion count.
+        Spacer(Modifier.height(Space.md))
+        // XP per day carries the shape of effort even when the number of
+        // non-negotiables changed, so it is a more honest line than a count.
         TrendLine(values = data.summaries.map { it.xp }, color = accent)
-        Text("XP per day", color = AscendColors.TextTertiary, fontSize = 10.sp)
+        Text("XP per day", color = AscendColors.TextTertiary, fontSize = Type.labelSize)
     }
 }
 
@@ -256,9 +247,9 @@ private fun WeekdayCard(data: AscendRepository.HistoryData) {
     if (recorded.isEmpty()) return
     val worst = recorded.minByOrNull { it.rate }
 
-    GlassCard {
-        Eyebrow("By day of week")
-        Spacer(Modifier.height(8.dp))
+    GlassCard(modifier = Modifier.fillMaxWidth()) {
+        SectionHeader("By day of week")
+        Spacer(Modifier.height(Space.sm))
         data.weekdays.forEach { day ->
             val hasData = day.daysRecorded > 0
             LabelledBar(
@@ -270,12 +261,12 @@ private fun WeekdayCard(data: AscendRepository.HistoryData) {
             )
         }
         if (worst != null && recorded.size >= 3) {
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(Space.sm))
             Text(
                 "${worst.day.getDisplayName(TextStyle.FULL, Locale.getDefault())} is your " +
                     "weakest day so far, at ${worst.rate}%.",
                 color = AscendColors.TextTertiary,
-                fontSize = 10.sp,
+                fontSize = Type.captionSize,
             )
         }
     }
@@ -283,7 +274,11 @@ private fun WeekdayCard(data: AscendRepository.HistoryData) {
 
 @Composable
 private fun HabitTrendCard(trend: History.HabitTrend) {
-    GlassCard(accent = trend.stat.color()) {
+    GlassCard(
+        accent = trend.stat.color(),
+        level = if (trend.isSlipping) SurfaceLevel.Highlighted else SurfaceLevel.Resting,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -293,19 +288,17 @@ private fun HabitTrendCard(trend: History.HabitTrend) {
                 Text(
                     trend.name,
                     color = AscendColors.TextPrimary,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 14.sp,
+                    fontSize = Type.titleSize,
+                    fontWeight = Type.titleWeight,
                 )
                 Text(
                     buildString {
                         append("${trend.completionRate}% overall")
                         if (trend.currentStreak > 0) append(" · ${trend.currentStreak}-day streak")
-                        if (trend.bestStreak > trend.currentStreak) {
-                            append(" · best ${trend.bestStreak}")
-                        }
+                        if (trend.bestStreak > trend.currentStreak) append(" · best ${trend.bestStreak}")
                     },
                     color = AscendColors.TextTertiary,
-                    fontSize = 11.sp,
+                    fontSize = Type.captionSize,
                 )
             }
             when {
@@ -314,19 +307,14 @@ private fun HabitTrendCard(trend: History.HabitTrend) {
                 else -> Pill(if (trend.isNonNegotiable) "CORE" else "EXTRA", AscendColors.Divider)
             }
         }
-        Spacer(Modifier.height(6.dp))
-        LabelledBar(
-            label = "",
-            percent = trend.completionRate,
-            color = trend.stat.color(),
-            trailing = "",
-        )
+        Spacer(Modifier.height(Space.sm))
+        LabelledBar(label = "", percent = trend.completionRate, color = trend.stat.color(), trailing = "")
         if (trend.isSlipping) {
             Text(
                 "Fell from ${trend.priorRate}% to ${trend.recentRate}% in the last " +
                     "${History.TREND_WINDOW_DAYS} days.",
                 color = AscendColors.Danger,
-                fontSize = 10.sp,
+                fontSize = Type.captionSize,
             )
         }
     }
