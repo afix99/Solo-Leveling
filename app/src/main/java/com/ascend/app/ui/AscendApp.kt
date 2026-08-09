@@ -44,6 +44,7 @@ import com.ascend.app.ui.screens.liestruths.LieTruthScreen
 import com.ascend.app.ui.screens.onboarding.OnboardingScreen
 import com.ascend.app.ui.screens.profile.ProfileScreen
 import com.ascend.app.ui.screens.cloud.CloudScreen
+import com.ascend.app.ui.screens.history.HistoryScreen
 import com.ascend.app.ui.screens.shop.ShopScreen
 import com.ascend.app.ui.screens.stats.StatsScreen
 import com.ascend.app.ui.screens.system.SystemScreen
@@ -70,6 +71,7 @@ private const val ROUTE_COACH_SETUP = "coach_setup"
 private const val ROUTE_CHAT = "coach_chat"
 private const val ROUTE_SHOP = "shop"
 private const val ROUTE_CLOUD = "cloud"
+private const val ROUTE_HISTORY = "history"
 
 @Composable
 fun AscendApp(repository: AscendRepository) {
@@ -135,6 +137,7 @@ private fun MainScaffold(repository: AscendRepository) {
                 composable(ROUTE_COACH_SETUP) { CoachSetupScreen(repository = repository) }
                 composable(ROUTE_SHOP) { ShopScreen(repository = repository) }
                 composable(ROUTE_CLOUD) { CloudScreen(repository = repository) }
+                composable(ROUTE_HISTORY) { HistoryScreen(repository = repository) }
                 composable(Dest.Profile.route) {
                     ProfileScreen(
                         repository = repository,
@@ -145,6 +148,7 @@ private fun MainScaffold(repository: AscendRepository) {
                         onOpenStats = { navController.navigate(ROUTE_STATS) },
                         onOpenShop = { navController.navigate(ROUTE_SHOP) },
                         onOpenCloud = { navController.navigate(ROUTE_CLOUD) },
+                        onOpenHistory = { navController.navigate(ROUTE_HISTORY) },
                     )
                 }
                 composable(ROUTE_WEEKLY_REVIEW) { WeeklyReviewScreen(repository = repository) }

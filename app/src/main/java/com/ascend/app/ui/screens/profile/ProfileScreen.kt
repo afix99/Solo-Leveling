@@ -64,6 +64,7 @@ fun ProfileScreen(
     onOpenStats: () -> Unit,
     onOpenShop: () -> Unit,
     onOpenCloud: () -> Unit,
+    onOpenHistory: () -> Unit,
 ) {
     val vm: ProfileViewModel = viewModel(factory = SimpleViewModelFactory { ProfileViewModel(repository) })
     val profile by vm.profile.collectAsStateWithLifecycle()
@@ -160,6 +161,8 @@ fun ProfileScreen(
                 MenuRow("Shop", onOpenShop)
                 Spacer(Modifier.height(4.dp))
                 MenuRow("Cloud backup", onOpenCloud)
+                Spacer(Modifier.height(4.dp))
+                MenuRow("History & trends", onOpenHistory)
                 Spacer(Modifier.height(4.dp))
                 MenuRow("Stat breakdown", onOpenStats)
                 Spacer(Modifier.height(4.dp))

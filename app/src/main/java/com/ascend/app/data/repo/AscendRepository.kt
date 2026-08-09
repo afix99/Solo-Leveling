@@ -38,6 +38,7 @@ import com.ascend.app.domain.Shadows
 import com.ascend.app.domain.Skill
 import com.ascend.app.domain.StatAllocation
 import com.ascend.app.domain.EvidenceType
+import com.ascend.app.domain.History
 import com.ascend.app.domain.HunterClass
 import com.ascend.app.domain.HunterStats
 import com.ascend.app.domain.ManaConversion
@@ -727,6 +728,101 @@ class AscendRepository(private val db: AscendDatabase) {
         hunterProfileDao.upsert(profile.copy(unlockedSkills = profile.unlockedSkills + skill))
         return true
     }
+
+    // ---- History analytics --------------------------------------------------
+
+    /**
+     * Everything the History screen needs, in one pass over the logs.
+     *
+     * Built here rather than in the ViewModel so the screen never holds raw
+     * rows, and computed locally rather than from the backup service so the
+     * screen works offline and on a device that never set up a backup.
+     */
+    data class HistoryData(
+        val summaries: List<History.DaySummary>,
+        val trends: List<History.HabitTrend>,
+        val weekdays: List<History.WeekdayStat>,
+        val momentum: History.Momentum,
+        val longestPerfectRun: Int,
+        val currentPerfectRun: Int,
+        val focusMinutesByDate: Map<LocalDate, Int>,
+    )
+
+    suspend fun buildHistory(today: LocalDate, days: Int = 90): HistoryData =
+        withContext(Dispatchers.IO) {
+            val start = today.minusDays((days - 1).toLong())
+            val habits = habitDao.getActiveHabits()
+            val habitsById = habits.associateBy { it.id }
+            val rows = dailyLogDao.getForRange(start.toString(), today.toString())
+
+            val facts = rows.mapNotNull { row ->
+                val habit = habitsById[row.habitId] ?: return@mapNotNull null
+                val date = runCatching { LocalDate.parse(row.date) }.getOrNull()
+                    ?: return@mapNotNull null
+                History.LogFact(
+                    habitId = row.habitId,
+                    date = date,
+                    completed = row.completed,
+                    isNonNegotiable = habit.isNonNegotiable,
+                    xp = row.xpAwarded,
+                    gold = row.goldAwarded,
+                )
+            }
+
+            // A habit created last week should not make the weeks before it
+            // look like failures, so a day only counts habits that existed by
+            // then. createdAt is the only signal available for that.
+            val nonNegotiables = habits.filter { it.isNonNegotiable }
+            val createdDates = nonNegotiables.associate { habit ->
+                habit.id to java.time.Instant.ofEpochMilli(habit.createdAt)
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDate()
+            }
+
+            val summaries = History.dailySummaries(
+                endDate = today,
+                days = days,
+                logsByDate = facts.groupBy { it.date },
+                nonNegotiableCountOn = { date ->
+                    nonNegotiables.count { habit ->
+                        val created = createdDates[habit.id]
+                        created == null || !created.isAfter(date)
+                    }
+                },
+            )
+
+            val perHabit = habits.map { habit ->
+                History.HabitFacts(
+                    habitId = habit.id,
+                    name = habit.name,
+                    stat = habit.stat,
+                    isNonNegotiable = habit.isNonNegotiable,
+                    logs = facts.filter { it.habitId == habit.id },
+                )
+            }
+
+            val (longest, current) = History.perfectRuns(summaries)
+
+            val focusByDate = focusSessionDao.getAll()
+                .filter { it.completed }
+                .groupBy {
+                    java.time.Instant.ofEpochMilli(it.startTimeEpochMillis)
+                        .atZone(ZoneId.systemDefault())
+                        .toLocalDate()
+                }
+                .mapValues { (_, sessions) -> sessions.sumOf { it.actualDurationSeconds } / 60 }
+
+            HistoryData(
+                summaries = summaries,
+                trends = History.habitTrends(perHabit, today)
+                    .sortedByDescending { it.completionRate },
+                weekdays = History.weekdayPattern(summaries),
+                momentum = History.momentum(summaries, today),
+                longestPerfectRun = longest,
+                currentPerfectRun = current,
+                focusMinutesByDate = focusByDate,
+            )
+        }
 
     // ---- Cloud backup -------------------------------------------------------
 

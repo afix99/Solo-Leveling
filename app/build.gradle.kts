@@ -13,8 +13,8 @@ android {
         applicationId = "com.ascend.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 15
-        versionName = "6.0"
+        versionCode = 16
+        versionName = "6.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
