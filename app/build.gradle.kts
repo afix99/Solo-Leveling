@@ -13,8 +13,8 @@ android {
         applicationId = "com.ascend.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 16
-        versionName = "6.1"
+        versionCode = 17
+        versionName = "6.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -83,6 +83,10 @@ dependencies {
     // defaults and parsing code appears to work while doing nothing. This pulls
     // in the real implementation so the parsers are genuinely exercised.
     testImplementation("org.json:json:20240303")
+    // Runs the real migration SQL against a real SQLite engine on the JVM.
+    // Room's MigrationTestHelper needs an emulator; this project has none, and
+    // migrations that have never been executed are the biggest data risk here.
+    testImplementation("org.xerial:sqlite-jdbc:3.46.1.3")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")

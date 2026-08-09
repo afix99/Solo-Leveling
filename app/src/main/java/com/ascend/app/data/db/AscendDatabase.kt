@@ -58,202 +58,23 @@ abstract class AscendDatabase : RoomDatabase() {
         const val SCHEMA_VERSION = 7
 
         /**
-         * v2 adds the economy layer: Gold, titles, classes, rewards,
-         * achievements and daily quests. Written as a real migration rather
-         * than a destructive fallback so nobody loses their streaks.
+         * The migrations, built from [MigrationSql].
+         *
+         * Each is a thin executor over a published list of statements, so the
+         * SQL that runs on a device is byte-for-byte the SQL a JVM test runs
+         * against a real SQLite engine. Adding a version means appending a
+         * list there and bumping the @Database version here — there is no
+         * second place to keep in sync.
          */
-        private val MIGRATION_1_2 = object : Migration(1, 2) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN gold INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN goldEarnedTotal INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN equippedTitleId TEXT")
-                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN hunterClass TEXT NOT NULL DEFAULT 'NONE'")
-                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN perfectDays INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN perfectWeeks INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN lastPerfectDate TEXT")
-                db.execSQL("ALTER TABLE daily_logs ADD COLUMN goldAwarded INTEGER NOT NULL DEFAULT 0")
-
-                db.execSQL(
-                    """
-                    CREATE TABLE IF NOT EXISTS rewards (
-                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-                        name TEXT NOT NULL,
-                        goldCost INTEGER NOT NULL,
-                        timesPurchased INTEGER NOT NULL DEFAULT 0,
-                        createdAt INTEGER NOT NULL,
-                        archived INTEGER NOT NULL DEFAULT 0
-                    )
-                    """.trimIndent(),
-                )
-                db.execSQL(
-                    """
-                    CREATE TABLE IF NOT EXISTS reward_purchases (
-                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-                        rewardId INTEGER NOT NULL,
-                        rewardName TEXT NOT NULL,
-                        goldSpent INTEGER NOT NULL,
-                        purchasedAtEpochMillis INTEGER NOT NULL
-                    )
-                    """.trimIndent(),
-                )
-                db.execSQL(
-                    """
-                    CREATE TABLE IF NOT EXISTS unlocked_achievements (
-                        achievementId TEXT NOT NULL PRIMARY KEY,
-                        unlockedAtEpochMillis INTEGER NOT NULL
-                    )
-                    """.trimIndent(),
-                )
-                db.execSQL(
-                    """
-                    CREATE TABLE IF NOT EXISTS daily_quests (
-                        date TEXT NOT NULL PRIMARY KEY,
-                        kind TEXT NOT NULL,
-                        description TEXT NOT NULL,
-                        targetCount INTEGER NOT NULL,
-                        targetHabitId INTEGER,
-                        xpReward INTEGER NOT NULL,
-                        goldReward INTEGER NOT NULL,
-                        claimed INTEGER NOT NULL DEFAULT 0
-                    )
-                    """.trimIndent(),
-                )
+        private val MIGRATIONS: Array<Migration> = MigrationSql.ALL
+            .map { (from, to, statements) ->
+                object : Migration(from, to) {
+                    override fun migrate(db: SupportSQLiteDatabase) {
+                        statements.forEach(db::execSQL)
+                    }
+                }
             }
-        }
-
-        /**
-         * v3 adds the choice layer: manually allocated stat points, unlocked
-         * skills, extracted Shadows and Gate runs. Written as a real migration
-         * so nobody loses streaks, gold or achievements.
-         */
-        private val MIGRATION_2_3 = object : Migration(2, 3) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN allocatedPoints TEXT NOT NULL DEFAULT ''")
-                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN unlockedSkills TEXT NOT NULL DEFAULT ''")
-
-                db.execSQL(
-                    """
-                    CREATE TABLE IF NOT EXISTS shadows (
-                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-                        name TEXT NOT NULL,
-                        habitId INTEGER NOT NULL,
-                        stat TEXT NOT NULL,
-                        extractedAtEpochMillis INTEGER NOT NULL,
-                        rank INTEGER NOT NULL DEFAULT 1
-                    )
-                    """.trimIndent(),
-                )
-                db.execSQL(
-                    """
-                    CREATE TABLE IF NOT EXISTS gate_runs (
-                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-                        rank TEXT NOT NULL,
-                        startDate TEXT NOT NULL,
-                        daysCleared INTEGER NOT NULL DEFAULT 0,
-                        status TEXT NOT NULL DEFAULT 'ACTIVE',
-                        stakePaid INTEGER NOT NULL,
-                        lastEvaluatedDate TEXT
-                    )
-                    """.trimIndent(),
-                )
-            }
-        }
-
-        /**
-         * v4 adds the AI coach: provider settings, the optional athlete profile,
-         * and cached advice so past answers stay readable offline.
-         */
-        private val MIGRATION_3_4 = object : Migration(3, 4) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
-                    """
-                    CREATE TABLE IF NOT EXISTS ai_settings (
-                        id INTEGER NOT NULL PRIMARY KEY,
-                        provider TEXT NOT NULL DEFAULT 'OPENROUTER',
-                        apiKey TEXT NOT NULL DEFAULT '',
-                        model TEXT NOT NULL DEFAULT '',
-                        age INTEGER,
-                        sex TEXT,
-                        heightCm INTEGER,
-                        weightKg INTEGER,
-                        goal TEXT,
-                        experience TEXT,
-                        equipment TEXT,
-                        dietaryNotes TEXT,
-                        injuries TEXT
-                    )
-                    """.trimIndent(),
-                )
-                db.execSQL(
-                    """
-                    CREATE TABLE IF NOT EXISTS coach_advice (
-                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-                        adviceType TEXT NOT NULL,
-                        content TEXT NOT NULL,
-                        model TEXT NOT NULL,
-                        createdAtEpochMillis INTEGER NOT NULL
-                    )
-                    """.trimIndent(),
-                )
-            }
-        }
-
-        /** v5 adds the System chat transcript. */
-        private val MIGRATION_4_5 = object : Migration(4, 5) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE ai_settings ADD COLUMN systemVoice INTEGER NOT NULL DEFAULT 1")
-                db.execSQL(
-                    """
-                    CREATE TABLE IF NOT EXISTS chat_messages (
-                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-                        role TEXT NOT NULL,
-                        content TEXT NOT NULL,
-                        createdAtEpochMillis INTEGER NOT NULL
-                    )
-                    """.trimIndent(),
-                )
-            }
-        }
-
-        /**
-         * Records how far the midnight rollover has actually got. Existing
-         * users start at null, which the catch-up treats as "only evaluate
-         * yesterday" — the old behaviour — so upgrading never retroactively
-         * penalises days that passed before this column existed.
-         */
-        private val MIGRATION_5_6 = object : Migration(5, 6) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN lastRolloverDate TEXT")
-                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN manaConvertedDate TEXT")
-                db.execSQL(
-                    "ALTER TABLE hunter_profile ADD COLUMN manaConvertedXpToday INTEGER NOT NULL DEFAULT 0",
-                )
-            }
-        }
-
-        /**
-         * v7 adds cloud backup settings and the sound/haptics toggles. Both
-         * feedback flags default to 0 so upgrading never makes a silent app
-         * start making noise.
-         */
-        private val MIGRATION_6_7 = object : Migration(6, 7) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN soundEnabled INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE hunter_profile ADD COLUMN hapticsEnabled INTEGER NOT NULL DEFAULT 0")
-                db.execSQL(
-                    """
-                    CREATE TABLE IF NOT EXISTS cloud_settings (
-                        id INTEGER NOT NULL PRIMARY KEY,
-                        baseUrl TEXT NOT NULL DEFAULT '',
-                        hunterKey TEXT NOT NULL DEFAULT '',
-                        autoBackup INTEGER NOT NULL DEFAULT 1,
-                        lastBackupAtEpochMillis INTEGER,
-                        lastBackupStatus TEXT
-                    )
-                    """.trimIndent(),
-                )
-            }
-        }
+            .toTypedArray()
 
         @Volatile private var instance: AscendDatabase? = null
 
@@ -264,7 +85,7 @@ abstract class AscendDatabase : RoomDatabase() {
                     AscendDatabase::class.java,
                     "ascend.db",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                    .addMigrations(*MIGRATIONS)
                     .build()
                     .also { instance = it }
             }
