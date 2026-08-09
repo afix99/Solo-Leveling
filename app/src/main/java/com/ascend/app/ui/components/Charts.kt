@@ -3,6 +3,7 @@ package com.ascend.app.ui.components
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -55,42 +56,52 @@ fun HabitHeatmap(
     val rows = 7
     val columns = (days.size + rows - 1) / rows
 
-    Canvas(modifier = modifier.fillMaxWidth().height((rows * 15).dp)) {
-        val gap = 3.dp.toPx()
-        val cell = ((size.width - gap * (columns - 1)) / columns).coerceAtLeast(1f)
-        val radius = CornerRadius(cell * 0.28f, cell * 0.28f)
+    // The height has to be derived from the cell size, and the cell size from
+    // the available width — measuring first with BoxWithConstraints. A fixed
+    // height guessed from the row count draws outside the Canvas as soon as
+    // the columns are wide enough, spilling squares over whatever follows.
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        val gap = 3.dp
+        val cell = ((maxWidth - gap * (columns - 1)) / columns).coerceAtLeast(2.dp)
+        val gridHeight = cell * rows + gap * (rows - 1)
 
-        days.forEachIndexed { index, (intensity, perfect, untracked) ->
-            val column = index / rows
-            val row = index % rows
-            val topLeft = Offset(column * (cell + gap), row * (cell + gap))
+        Canvas(modifier = Modifier.fillMaxWidth().height(gridHeight)) {
+            val gapPx = gap.toPx()
+            val cellPx = cell.toPx()
+            val radius = CornerRadius(cellPx * 0.28f, cellPx * 0.28f)
 
-            when {
-                untracked -> drawRoundRect(
-                    color = AscendColors.Divider.copy(alpha = 0.35f),
-                    topLeft = topLeft,
-                    size = Size(cell, cell),
-                    cornerRadius = radius,
-                    style = Stroke(width = 1.dp.toPx()),
-                )
+            days.forEachIndexed { index, (intensity, perfect, untracked) ->
+                val column = index / rows
+                val row = index % rows
+                val topLeft = Offset(column * (cellPx + gapPx), row * (cellPx + gapPx))
 
-                perfect -> drawRoundRect(
-                    color = perfectColor,
-                    topLeft = topLeft,
-                    size = Size(cell, cell),
-                    cornerRadius = radius,
-                )
-
-                else -> {
-                    // Floor the alpha so a genuinely-logged miss is still
-                    // visible as a filled cell rather than vanishing.
-                    val alpha = if (intensity <= 0f) 0.14f else 0.2f + intensity * 0.65f
-                    drawRoundRect(
-                        color = accent.copy(alpha = alpha),
+                when {
+                    untracked -> drawRoundRect(
+                        color = AscendColors.Divider.copy(alpha = 0.35f),
                         topLeft = topLeft,
-                        size = Size(cell, cell),
+                        size = Size(cellPx, cellPx),
+                        cornerRadius = radius,
+                        style = Stroke(width = 1.dp.toPx()),
+                    )
+
+                    perfect -> drawRoundRect(
+                        color = perfectColor,
+                        topLeft = topLeft,
+                        size = Size(cellPx, cellPx),
                         cornerRadius = radius,
                     )
+
+                    else -> {
+                        // Floor the alpha so a genuinely-logged miss is still
+                        // visible as a filled cell rather than vanishing.
+                        val alpha = if (intensity <= 0f) 0.14f else 0.2f + intensity * 0.65f
+                        drawRoundRect(
+                            color = accent.copy(alpha = alpha),
+                            topLeft = topLeft,
+                            size = Size(cellPx, cellPx),
+                            cornerRadius = radius,
+                        )
+                    }
                 }
             }
         }

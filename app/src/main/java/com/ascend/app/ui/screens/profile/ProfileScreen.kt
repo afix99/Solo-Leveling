@@ -24,7 +24,22 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.EmojiEvents
+import androidx.compose.material.icons.filled.EventNote
+import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material.icons.filled.Insights
+import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.ShoppingBag
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -158,21 +173,29 @@ fun ProfileScreen(
 
         item {
             GlassCard(accent = AscendColors.AccentBlue) {
-                MenuRow("Shop", onOpenShop)
+                MenuRow("Shop", onOpenShop, Icons.Default.ShoppingBag, AscendColors.Amber,
+                    "Spend gold on real rewards")
                 Spacer(Modifier.height(4.dp))
-                MenuRow("Cloud backup", onOpenCloud)
+                MenuRow("Cloud backup", onOpenCloud, Icons.Default.CloudUpload, AscendColors.AccentBlue,
+                    "Keep your streak safe off-device")
                 Spacer(Modifier.height(4.dp))
-                MenuRow("History & trends", onOpenHistory)
+                MenuRow("History & trends", onOpenHistory, Icons.Default.Insights, AscendColors.Success,
+                    "Heatmap, momentum, weak days")
                 Spacer(Modifier.height(4.dp))
-                MenuRow("Stat breakdown", onOpenStats)
+                MenuRow("Stat breakdown", onOpenStats, Icons.Default.BarChart, AscendColors.StatPer,
+                    "Levels and XP per stat")
                 Spacer(Modifier.height(4.dp))
-                MenuRow("Achievements & Titles", onOpenAchievements)
+                MenuRow("Achievements & Titles", onOpenAchievements, Icons.Default.EmojiEvents, AscendColors.Amber,
+                    "21 to unlock, 8 titles to equip")
                 Spacer(Modifier.height(4.dp))
-                MenuRow("Weekly Review", onOpenWeeklyReview)
+                MenuRow("Weekly Review", onOpenWeeklyReview, Icons.Default.EventNote, AscendColors.AccentViolet,
+                    "Last week, and a note to yourself")
                 Spacer(Modifier.height(4.dp))
-                MenuRow("Lies vs Truths", onOpenLiesTruths)
+                MenuRow("Lies vs Truths", onOpenLiesTruths, Icons.Default.Psychology, AscendColors.Danger,
+                    "The excuses you have already answered")
                 Spacer(Modifier.height(4.dp))
-                MenuRow("How it works", onOpenHowItWorks)
+                MenuRow("How it works", onOpenHowItWorks, Icons.Default.HelpOutline, AscendColors.TextSecondary,
+                    "Every rule, in plain language")
             }
         }
 
@@ -303,14 +326,52 @@ fun ProfileScreen(
 }
 
 @Composable
-private fun MenuRow(label: String, onClick: () -> Unit) {
+private fun MenuRow(
+    label: String,
+    onClick: () -> Unit,
+    icon: ImageVector = Icons.Default.ChevronRight,
+    accent: Color = AscendColors.AccentBlue,
+    subtitle: String? = null,
+) {
     Row(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, color = AscendColors.TextPrimary, fontSize = 14.sp)
-        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = AscendColors.TextTertiary)
+        // A tinted glyph tile rather than a bare label: the colour is what
+        // makes a long list scannable, since at a glance you look for "the
+        // amber one" long before you read eight words.
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(accent.copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = accent,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                label,
+                color = AscendColors.TextPrimary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            if (subtitle != null) {
+                Text(subtitle, color = AscendColors.TextTertiary, fontSize = 11.sp)
+            }
+        }
+        Icon(
+            Icons.Default.ChevronRight,
+            contentDescription = null,
+            tint = AscendColors.TextTertiary,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 
